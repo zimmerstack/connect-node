@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    "typeRoots": ["../../node_modules/@types"],
+    "skipLibCheck": true,
+    "paths": {
+      "@/*": ["./*"],
+      "@zimmerstack/connect": ["../../src/index.ts"]
+    },
+    "allowImportingTsExtensions": true
+  },
+  "include": ["."]
+}
