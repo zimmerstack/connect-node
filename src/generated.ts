@@ -2,7 +2,7 @@
 // Do not edit: change the contract, then run `pnpm --dir apps/connect-sdk run generate`.
 
 /** This package's version, sent as the user agent so ZimmerStack can tell which client a request came from. */
-export const SDK_VERSION = "0.6.0";
+export const SDK_VERSION = "0.7.0";
 /** Where the API lives. The key is sent nowhere else. */
 export const API_ORIGIN = "https://api.zimmerstack.com";
 export const API_PREFIX = "/api/v1/connect-api/v1";
@@ -63,6 +63,8 @@ export const ERROR_CODES = [
   "EXTERNAL_REFERENCE_REUSED",
   "PAYMENT_NOT_ALLOWED",
   "PAYMENT_EXCEEDS_TOTAL",
+  "TAXES_NOT_CONFIGURED",
+  "TAXES_INSIDE_RATES",
   "BOOKING_NOT_FOUND",
   "BOOKING_NOT_CANCELLABLE",
   "MODULE_NOT_ENTITLED",
@@ -127,7 +129,7 @@ export interface Error {
   /** Human-readable, may change; branch on data.code */
   message: string;
   data: {
-    code: "API_KEY_INVALID" | "API_KEY_REVOKED" | "API_KEY_EXPIRED" | "CONNECT_API_NOT_CONFIGURED" | "IP_NOT_ALLOWED" | "SCOPE_MISSING" | "PROPERTY_UNAVAILABLE" | "CHANNEL_MANAGER_DISABLED" | "PMS_NOT_AVAILABLE" | "VALIDATION" | "RANGE_INVALID" | "HORIZON" | "TOO_MANY_UPDATES" | "TOO_MANY_CELLS" | "UNKNOWN_ROOM_TYPE" | "UNKNOWN_RATE_PLAN" | "CURRENCY_MISMATCH" | "RATE_LIMITED" | "NOTHING_ACCEPTED" | "BATCH_NOT_FOUND" | "IDEMPOTENCY_KEY_INVALID" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "STAY_INVALID" | "UNKNOWN_ROOM_TYPE_FOR_PLAN" | "OCCUPANCY_EXCEEDED" | "NO_AVAILABILITY" | "EXTERNAL_REFERENCE_REUSED" | "PAYMENT_NOT_ALLOWED" | "PAYMENT_EXCEEDS_TOTAL" | "BOOKING_NOT_FOUND" | "BOOKING_NOT_CANCELLABLE" | "MODULE_NOT_ENTITLED" | "SANDBOX_ONLY" | "ROOM_TYPE_NOT_FOUND" | "RATE_PLAN_NOT_FOUND" | "CATALOG_CONFLICT" | "CATALOG_BUSY" | "CHANNEL_MANAGER_ERROR" | "PROPERTY_REQUIRED" | "PROPERTY_NOT_FOUND" | "ARI_NOT_AUTHORITATIVE" | "ROUTE_NOT_FOUND" | "PAYLOAD_TOO_LARGE" | "AUTH_BACKEND_UNAVAILABLE" | "BOOKING_NOT_MODIFIABLE" | "SANDBOX_NOT_FOUND" | "SANDBOX_INCOMPLETE" | "WRITES_FROZEN" | "WRITES_SUSPENDED" | "SHIELD_UNAVAILABLE" | "CATALOG_LIMIT_REACHED" | "TOO_MANY_NEW_ENTITIES" | "RATE_OUT_OF_BAND" | "CHANNEL_NOT_FOUND" | "CHANNEL_SHARED" | "MODIFIER_OUT_OF_BAND" | "COMPANY_KEY_REQUIRED" | "BILLING_SETUP_REQUIRED" | "OWNER_HAS_ACCOUNT" | "SANDBOX_LIMIT" | "CONFIRMATION_MISMATCH" | "PROPERTY_NOT_REMOVABLE" | "PROPERTY_BUSY" | "PRICE_UNAVAILABLE";
+    code: "API_KEY_INVALID" | "API_KEY_REVOKED" | "API_KEY_EXPIRED" | "CONNECT_API_NOT_CONFIGURED" | "IP_NOT_ALLOWED" | "SCOPE_MISSING" | "PROPERTY_UNAVAILABLE" | "CHANNEL_MANAGER_DISABLED" | "PMS_NOT_AVAILABLE" | "VALIDATION" | "RANGE_INVALID" | "HORIZON" | "TOO_MANY_UPDATES" | "TOO_MANY_CELLS" | "UNKNOWN_ROOM_TYPE" | "UNKNOWN_RATE_PLAN" | "CURRENCY_MISMATCH" | "RATE_LIMITED" | "NOTHING_ACCEPTED" | "BATCH_NOT_FOUND" | "IDEMPOTENCY_KEY_INVALID" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "STAY_INVALID" | "UNKNOWN_ROOM_TYPE_FOR_PLAN" | "OCCUPANCY_EXCEEDED" | "NO_AVAILABILITY" | "EXTERNAL_REFERENCE_REUSED" | "PAYMENT_NOT_ALLOWED" | "PAYMENT_EXCEEDS_TOTAL" | "TAXES_NOT_CONFIGURED" | "TAXES_INSIDE_RATES" | "BOOKING_NOT_FOUND" | "BOOKING_NOT_CANCELLABLE" | "MODULE_NOT_ENTITLED" | "SANDBOX_ONLY" | "ROOM_TYPE_NOT_FOUND" | "RATE_PLAN_NOT_FOUND" | "CATALOG_CONFLICT" | "CATALOG_BUSY" | "CHANNEL_MANAGER_ERROR" | "PROPERTY_REQUIRED" | "PROPERTY_NOT_FOUND" | "ARI_NOT_AUTHORITATIVE" | "ROUTE_NOT_FOUND" | "PAYLOAD_TOO_LARGE" | "AUTH_BACKEND_UNAVAILABLE" | "BOOKING_NOT_MODIFIABLE" | "SANDBOX_NOT_FOUND" | "SANDBOX_INCOMPLETE" | "WRITES_FROZEN" | "WRITES_SUSPENDED" | "SHIELD_UNAVAILABLE" | "CATALOG_LIMIT_REACHED" | "TOO_MANY_NEW_ENTITIES" | "RATE_OUT_OF_BAND" | "CHANNEL_NOT_FOUND" | "CHANNEL_SHARED" | "MODIFIER_OUT_OF_BAND" | "COMPANY_KEY_REQUIRED" | "BILLING_SETUP_REQUIRED" | "OWNER_HAS_ACCOUNT" | "SANDBOX_LIMIT" | "CONFIRMATION_MISMATCH" | "PROPERTY_NOT_REMOVABLE" | "PROPERTY_BUSY" | "PRICE_UNAVAILABLE";
     details?: unknown;
   };
 }
@@ -354,7 +356,7 @@ export interface RoomTypesUpsert {
     ref: string;
     /** Shown to the owner and sent to the channel manager as the title */
     name: string;
-    /** Sellable rooms of this type. On a channel-manager-only hotel a later change is written too, to the channel manager first (its count caps what the channels sell); a count below the rooms holding upcoming stays is refused. On a hotel that runs our PMS the count comes from its room list and a different value is not written (the answer's notice says so) */
+    /** Sellable rooms of this type. On a channel-manager-only hotel a later change is written too, to the channel manager first; a count below the rooms holding upcoming stays is refused. The count does not cap a night: an availability above it is accepted with a warning, reaches the booking sites, and is what a price by rooms counts for that month. On a hotel that runs our PMS the count comes from its room list and a different value is not written (the answer's notice says so) */
     roomCount: number;
     /** Most adults one room takes */
     adults: number;
@@ -476,7 +478,7 @@ export interface RatesWrite {
     /** Hotel-local calendar date, YYYY-MM-DD */
     dateTo: string;
     days?: Array<"mo" | "tu" | "we" | "th" | "fr" | "sa" | "su">;
-    /** Nightly sell price in MAJOR units (e.g. 4500 or "4500.00"), 1 to 21474836; rounded to a whole major unit */
+    /** Nightly sell price in MAJOR units (e.g. 4500 or "4500.00"), 1 to 21474836; rounded to a whole major unit for a property selling in rupees or in a currency without cents, kept to the cent otherwise (e.g. "89.50" in euros) */
     rate: number | string;
     /** ISO 4217; must equal the property's currency (GET /property) */
     currency: string;
@@ -661,6 +663,8 @@ export interface BookingCreate {
     /** The nightly price YOU charged for this room, MAJOR units (e.g. 4500 or "4500.00"), 1 to 21474836, taxes as you sold them */
     nightlyRate: number | string;
   }>;
+  /** How to read nightlyRate at a hotel outside India that has confirmed its tax lines. true (the default): the rate is what the guest paid online; it is split into the hotel's lines and totalAmount does not move, except for a line the hotel collects at the property itself (a city tax per person), which is added and paid at the hotel. false: the rate is as the hotel sells it at its desk; the lines the hotel adds on top are added and totalAmount grows, while lines the hotel keeps inside its prices stay inside. Read totalAmount and taxes in the answer. false is refused with 409 TAXES_NOT_CONFIGURED at a hotel with no confirmed lines (every hotel in India) and with 409 TAXES_INSIDE_RATES at a hotel that adds nothing on top; true, or omitting the field, changes nothing at a hotel with no confirmed lines */
+  nightlyRateIncludesTaxes?: boolean;
   /** Omit when nothing was collected; an amount above 0 needs the bookings:payments scope */
   payment?: {
     /** What you collected so far, MAJOR units; 0 = nothing collected (pay at hotel); never more than the stay's total */
@@ -730,6 +734,28 @@ export interface Booking {
   replay: boolean;
   createdAt: string;
   cancelledAt: string | null;
+  /** The hotel's own tax lines on this booking. Present only where the hotel has confirmed them (outside India); absent on every other booking */
+  taxes?: {
+    /** How the nightly rate was read when the booking was made: true = it was split into the lines; false = lines the hotel adds on top were added to the total */
+    nightlyRateIncludesTaxes: boolean;
+    /** The hotel's own tax lines on this booking, in the order the hotel applies them */
+    lines: Array<{
+      /** The line's filing code as the hotel set it up (for example TH-VAT) */
+      code: string;
+      /** The line's name as the hotel's bill prints it */
+      name: string;
+      /** TAX is owed to an authority; FEE is the hotel's own charge (a service charge); PASS_THROUGH is held for someone else */
+      kind: "TAX" | "FEE" | "PASS_THROUGH";
+      /** true: inside the nightly rate; false: added on top of it */
+      includedInRate: boolean;
+      /** MAJOR units, two decimals, for the whole stay; 0.00 when the desk waived the line */
+      amount: string;
+    }>;
+    /** MAJOR units, two decimals: the part of the lines that sits inside the nightly rates */
+    includedInRates: string;
+    /** MAJOR units, two decimals: the part of the lines added on top; already inside totalAmount */
+    addedToTotal: string;
+  };
 }
 
 export interface BookingsList {
@@ -776,6 +802,28 @@ export interface BookingsList {
     replay: boolean;
     createdAt: string;
     cancelledAt: string | null;
+    /** The hotel's own tax lines on this booking. Present only where the hotel has confirmed them (outside India); absent on every other booking */
+    taxes?: {
+      /** How the nightly rate was read when the booking was made: true = it was split into the lines; false = lines the hotel adds on top were added to the total */
+      nightlyRateIncludesTaxes: boolean;
+      /** The hotel's own tax lines on this booking, in the order the hotel applies them */
+      lines: Array<{
+        /** The line's filing code as the hotel set it up (for example TH-VAT) */
+        code: string;
+        /** The line's name as the hotel's bill prints it */
+        name: string;
+        /** TAX is owed to an authority; FEE is the hotel's own charge (a service charge); PASS_THROUGH is held for someone else */
+        kind: "TAX" | "FEE" | "PASS_THROUGH";
+        /** true: inside the nightly rate; false: added on top of it */
+        includedInRate: boolean;
+        /** MAJOR units, two decimals, for the whole stay; 0.00 when the desk waived the line */
+        amount: string;
+      }>;
+      /** MAJOR units, two decimals: the part of the lines that sits inside the nightly rates */
+      includedInRates: string;
+      /** MAJOR units, two decimals: the part of the lines added on top; already inside totalAmount */
+      addedToTotal: string;
+    };
   }>;
 }
 
@@ -969,6 +1017,8 @@ export interface ChannelBookingsList {
       paid: number;
       balanceDue: number;
       paymentCollect: "ota" | "property" | "unknown";
+      /** ISO 4217. Present only when the OTA sent the booking in another currency than the property's: the amounts in this booking (total, paid, balanceDue, each room's ratePerNight and amount) are then in THIS currency as the OTA sent them, not converted. Absent otherwise */
+      receivedCurrency?: string;
     };
     finance: {
       otaName: string;
@@ -979,6 +1029,18 @@ export interface ChannelBookingsList {
       taxAmount: number | null;
       netPayoutAmount: number | null;
     } | null;
+    /** The hotel's own tax lines on this booking. Present only where the hotel has confirmed its taxes (outside India) and the booking has been assessed; absent on every other booking */
+    taxes?: {
+      lines: Array<{
+        code: string;
+        name: string;
+        kind: "TAX" | "FEE" | "PASS_THROUGH";
+        includedInRate: boolean;
+        amount: number;
+      }>;
+      includedInRates: number;
+      addedToTotal: number;
+    };
     cancellation: {
       at: string;
       reason: string | null;
@@ -1044,6 +1106,8 @@ export interface ChannelBooking {
     paid: number;
     balanceDue: number;
     paymentCollect: "ota" | "property" | "unknown";
+    /** ISO 4217. Present only when the OTA sent the booking in another currency than the property's: the amounts in this booking (total, paid, balanceDue, each room's ratePerNight and amount) are then in THIS currency as the OTA sent them, not converted. Absent otherwise */
+    receivedCurrency?: string;
   };
   finance: {
     otaName: string;
@@ -1054,6 +1118,18 @@ export interface ChannelBooking {
     taxAmount: number | null;
     netPayoutAmount: number | null;
   } | null;
+  /** The hotel's own tax lines on this booking. Present only where the hotel has confirmed its taxes (outside India) and the booking has been assessed; absent on every other booking */
+  taxes?: {
+    lines: Array<{
+      code: string;
+      name: string;
+      kind: "TAX" | "FEE" | "PASS_THROUGH";
+      includedInRate: boolean;
+      amount: number;
+    }>;
+    includedInRates: number;
+    addedToTotal: number;
+  };
   cancellation: {
     at: string;
     reason: string | null;
@@ -1123,6 +1199,8 @@ export interface DirectBookingCancelResult {
       paid: number;
       balanceDue: number;
       paymentCollect: "ota" | "property" | "unknown";
+      /** ISO 4217. Present only when the OTA sent the booking in another currency than the property's: the amounts in this booking (total, paid, balanceDue, each room's ratePerNight and amount) are then in THIS currency as the OTA sent them, not converted. Absent otherwise */
+      receivedCurrency?: string;
     };
     finance: {
       otaName: string;
@@ -1133,6 +1211,18 @@ export interface DirectBookingCancelResult {
       taxAmount: number | null;
       netPayoutAmount: number | null;
     } | null;
+    /** The hotel's own tax lines on this booking. Present only where the hotel has confirmed its taxes (outside India) and the booking has been assessed; absent on every other booking */
+    taxes?: {
+      lines: Array<{
+        code: string;
+        name: string;
+        kind: "TAX" | "FEE" | "PASS_THROUGH";
+        includedInRate: boolean;
+        amount: number;
+      }>;
+      includedInRates: number;
+      addedToTotal: number;
+    };
     cancellation: {
       at: string;
       reason: string | null;

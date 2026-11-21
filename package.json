@@ -1,6 +1,6 @@
 {
   "name": "@zimmerstack/connect",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Add a channel manager to your hotel software: send rooms and prices to Booking.com, Airbnb, Expedia and other booking sites, and receive their bookings. The official ZimmerStack Connect API client for Node.js, with safe retries and pacing built in and an MCP server for AI coding agents.",
   "license": "MIT",
   "homepage": "https://docs.zimmerstack.com/sdk",

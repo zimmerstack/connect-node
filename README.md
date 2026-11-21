@@ -194,6 +194,13 @@ No database yet? Read the bookings back any time with `zs.channelBookings.list()
 your server was down, `zs.channelBookings.all({ since })` gives every booking changed since a time you
 choose.
 
+Hotels outside India (from 0.7.0): a booking carries `taxes`, the hotel's own tax lines, wherever the
+hotel has confirmed them. When a booking site sends a booking in another currency than the hotel's,
+`amounts.receivedCurrency` names it; the amounts are as the site sent them, never converted. At such a
+hotel `zs.bookings.create` also takes `nightlyRateIncludesTaxes`; `false` is refused with
+`TAXES_NOT_CONFIGURED` where the hotel has confirmed no lines, and `TAXES_INSIDE_RATES` where all its
+taxes sit inside its prices.
+
 Guide: <https://docs.zimmerstack.com/webhooks>
 
 ## A different price on each booking site
