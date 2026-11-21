@@ -108,7 +108,7 @@ https://docs.zimmerstack.com/llms-full.txt
 - `zs.channels.setModifier(channelId, steps)` moves EVERY price sent to that channel from then on.
   Call it only when a person saved that setting on a screen. Never from a loop, a timer, a seed
   script or a test against a live key. A hotel may change modifiers 6 times a day.
-- A modifier applies to prices sent to the channel after the change. Prices already on the channel stay as they are until those nights are sent again.
+- Saving a modifier makes the channel manager send that channel every date again, so prices already on the channel move to the new rule within minutes.
   Show that sentence where the person saves (`MODIFIER_TAKES_EFFECT`), and offer
   `zs.rates.resend()` as a separate, deliberate button ("Apply to nights already on sale"): 3 a day
   per hotel, never automatic.
@@ -118,10 +118,16 @@ https://docs.zimmerstack.com/llms-full.txt
 ## Website bookings: apply them before you push room counts
 
 - When the hotel also sells on its own website through ZimmerStack's booking engine, those bookings
-  reach you as the webhooks `direct.booking.created` and `direct.booking.cancelled` (the endpoint must
-  list those two types) and by `zs.directBookings.all({ since })` (scope `direct-bookings:read`). They
-  are not OTA bookings: `isWebsiteBookingEvent(event)` tells them apart, `channel.otaName` is `"Website"`
-  and `finance` is null. There is no modified event.
+  reach you as the webhooks `direct.booking.created`, `direct.booking.modified` and
+  `direct.booking.cancelled` (the endpoint receives each only when it lists that type) and by
+  `zs.directBookings.all({ since })` (scope `direct-bookings:read`). They are not OTA bookings:
+  `isWebsiteBookingEvent(event)` tells them apart, `channel.otaName` is `"Website"` and `finance` is null.
+- `direct.booking.modified` is a no-show and its undo, nothing else yet: the hotel recorded that the guest
+  did not arrive, or undid that. It is NOT a cancellation: `status` stays CONFIRMED and the payment is
+  untouched, so never refund on it. Read `stayStatus` and each room's `status`: NOSHOW gives the nights
+  back (they are on sale again on every channel), UPCOMING again holds them. `changes` names what moved
+  (`"stayStatus"`, `"rooms[0].status"`); `previous` is the booking as it read before, `stayStatus`
+  included. The sandbox does not simulate one: the endpoint's Test button sends the sample.
 - A website booking takes one room off the count the channels hold, at once. A PMS that pushes absolute
   room counts must apply the booking to its own calendar BEFORE its next `zs.availability.set` or
   `zs.grid.save`, or that push puts the sold room back on sale. Read `zs.directBookings.all` before a

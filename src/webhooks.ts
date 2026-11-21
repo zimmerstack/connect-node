@@ -8,11 +8,17 @@ import type { ChannelBooking } from "./generated.ts";
 /** An OTA booking arrived, changed or was cancelled (through the channel manager). */
 export const OTA_BOOKING_EVENT_TYPES = ["channel.booking.created", "channel.booking.modified", "channel.booking.cancelled"] as const;
 /**
- * A guest booked, or cancelled, on the hotel's own website through ZimmerStack's booking engine. The same
- * booking object as the OTA events, in a family of its own: an endpoint receives these only when it lists
- * the two types. There is no modified event.
+ * A booking on the hotel's own website through ZimmerStack's booking engine: the guest booked, the hotel
+ * recorded that the guest did not arrive (or undid that), or the booking was cancelled. The same booking
+ * object as the OTA events, in a family of its own: an endpoint receives each of these only when it lists
+ * that type.
+ *
+ * `direct.booking.modified` (from 0.6.0; the API sends it since 21 Nov 2026) is a no-show and its undo.
+ * The booking is not cancelled: `status` stays CONFIRMED and the payment is untouched. Read
+ * `data.booking.stayStatus`: NOSHOW means the nights are on sale again (free the room), UPCOMING again
+ * means the no-show was undone (hold the room). Nothing else sends it yet.
  */
-export const WEBSITE_BOOKING_EVENT_TYPES = ["direct.booking.created", "direct.booking.cancelled"] as const;
+export const WEBSITE_BOOKING_EVENT_TYPES = ["direct.booking.created", "direct.booking.modified", "direct.booking.cancelled"] as const;
 /** Every event whose `data.booking` is a booking, of either family. */
 export const BOOKING_EVENT_TYPES = [...OTA_BOOKING_EVENT_TYPES, ...WEBSITE_BOOKING_EVENT_TYPES] as const;
 
@@ -28,7 +34,7 @@ export interface WebhookEvent {
   id: string;
   /**
    * channel.booking.created · channel.booking.modified · channel.booking.cancelled (an OTA booking) ·
-   * direct.booking.created · direct.booking.cancelled (a booking on the hotel's own website) ·
+   * direct.booking.created · direct.booking.modified · direct.booking.cancelled (a booking on the hotel's own website) ·
    * channel.sync.* · zimmerstack.ping. Narrow it with `isOtaBookingEvent` and `isWebsiteBookingEvent`.
    */
   type: string;
@@ -38,16 +44,19 @@ export interface WebhookEvent {
   mode: "live" | "test";
   property: { id: number; name: string; currency: string; timezone: string; [key: string]: unknown };
   data: { booking?: ChannelBooking; [key: string]: unknown };
-  /** Dotted paths that changed, on a modification ("stay.checkOut"). */
+  /** Dotted paths that changed, on a modification ("stay.checkOut"; on a website booking's no-show, "stayStatus" and "rooms[0].status"). */
   changes?: string[] | null;
-  /** What those fields held before, on a modification. */
+  /** What those fields held before, on a modification. A website booking's carries `stayStatus` too. */
   previous?: Record<string, unknown> | null;
   truncated?: boolean;
 }
 
 /** An event whose `data.booking` is there: of either booking family. */
 export type BookingEvent = WebhookEvent & { type: BookingEventType; data: { booking: ChannelBooking; [key: string]: unknown } };
-/** A booking a guest made on the hotel's own website. `finance` is null and `changes` and `previous` always are. */
+/**
+ * A booking a guest made on the hotel's own website. `finance` is always null; `changes` and `previous`
+ * are set on `direct.booking.modified` (a no-show, or its undo) and null on the other two.
+ */
 export type WebsiteBookingEvent = BookingEvent & { type: WebsiteBookingEventType };
 /** A booking an OTA sent. */
 export type OtaBookingEvent = BookingEvent & { type: OtaBookingEventType };
@@ -55,8 +64,9 @@ export type OtaBookingEvent = BookingEvent & { type: OtaBookingEventType };
 const isType = (list: readonly string[], event: { type?: unknown } | null | undefined): boolean => typeof event?.type === "string" && list.includes(event.type);
 
 /**
- * True for `direct.booking.created` and `direct.booking.cancelled`: a booking made on the hotel's own
- * website. A PMS that pushes room counts must put it in its own calendar before its next push.
+ * True for `direct.booking.created`, `direct.booking.modified` and `direct.booking.cancelled`: a booking
+ * made on the hotel's own website. A PMS that pushes room counts must put it in its own calendar before its
+ * next push, and give the nights back when the booking is cancelled or reads `stayStatus` NOSHOW.
  */
 export function isWebsiteBookingEvent(event: WebhookEvent): event is WebsiteBookingEvent {
   return isType(WEBSITE_BOOKING_EVENT_TYPES, event) && Boolean(event.data?.booking);

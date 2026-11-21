@@ -6,14 +6,17 @@ back to you.
 
 - **Free to build.** You get a practice hotel the moment you sign up. Nothing you do there reaches a
   real booking site.
-- **One public price.** A fixed price for each live property a month, on one invoice. You accept it in
-  the partner portal. No call needed: <https://docs.zimmerstack.com/pricing>
+- **Public prices.** A fixed price for each live property a month, on one invoice. A partner in India
+  pays the price plus GST. A partner outside India pays its own price, with nothing added. You accept
+  it in the partner portal. Going live has a one-time onboarding fee of $50, paid once in the portal
+  before your live key. No call needed: <https://docs.zimmerstack.com/pricing>
 - **Made for AI coding tools.** The package carries its own rules file and a helper your coding agent
   can ask. See [For AI coding agents](#for-ai-coding-agents).
 
 [Docs](https://docs.zimmerstack.com) · [Quickstart](https://docs.zimmerstack.com/quickstart) ·
 [Pricing](https://docs.zimmerstack.com/pricing) · [Partner portal](https://partner.zimmerstack.com/login) ·
 [Starter app](https://github.com/zimmerstack/connect-starter) ·
+[Source](https://github.com/zimmerstack/connect-node) ·
 [Changelog](https://docs.zimmerstack.com/changelog) · <support@zimmerstack.com>
 
 ## Start in five minutes
@@ -172,7 +175,7 @@ export async function POST(request: Request) {
   const event = await verifyWebhook(await request.text(), request.headers, process.env.ZIMMERSTACK_WEBHOOK_SECRET!);
   // A message can arrive twice. Remember event.id and skip one you have seen.
   if (isOtaBookingEvent(event)) await save(event.data.booking); // a booking site: created, modified, cancelled
-  if (isWebsiteBookingEvent(event)) await applyToMyCalendar(event.data.booking); // the hotel's own website
+  if (isWebsiteBookingEvent(event)) await applyToMyCalendar(event.data.booking); // the hotel's own website: created, a no-show, cancelled
   return new Response(null, { status: 204 });
 }
 ```
@@ -213,10 +216,11 @@ await zs.channels.setModifier(booking.channelId, [
 channelPrice(4500, booking.modifier ?? []); // what Booking.com is sent for 4,500. Show it beside your calendar.
 ```
 
-A modifier changes prices sent after you save it. Prices already on the booking site stay until those
-nights are sent again. `MODIFIER_TAKES_EFFECT` is that sentence, ready to show where a person saves.
-`zs.rates.resend()` sends the nights again, unchanged. A hotel may ask a few times a day, so make it a
-button of its own.
+`MODIFIER_TAKES_EFFECT` is the sentence to show where a person saves one: saving makes the channel
+manager send that channel every date again, so prices already on sale move to the new rule within
+minutes. No re-send is needed. `zs.rates.resend()` stays for the rare case where you want our
+record's prices sent again, unchanged; a hotel may ask a few times a day, so never call it
+automatically.
 
 One call to `zs.channels.setModifier()` moves every price on that booking site. Call it when a person
 saved the setting. Never from a loop, a timer or a set-up script.
@@ -288,12 +292,26 @@ Guide: <https://docs.zimmerstack.com/hotels>
 Some hotels sell on their own website through ZimmerStack's booking engine and keep your software as
 their PMS. Those bookings reach you in two ways:
 
-- the webhooks `direct.booking.created` and `direct.booking.cancelled` (your address must list both);
+- the webhooks `direct.booking.created`, `direct.booking.modified` and `direct.booking.cancelled` (your
+  address receives each one only when it lists that type);
 - `zs.directBookings.list()` and `zs.directBookings.all({ since })`, with the permission
   `direct-bookings:read`.
 
 The booking looks like a booking site's booking. `channel.otaName` is `"Website"`, `finance` is null and
-`amounts.paid` is what the guest paid online. There is no "modified" message.
+`amounts.paid` is what the guest paid online.
+
+`direct.booking.modified` (from 0.6.0) tells you about a **no-show**: the hotel recorded that the guest did
+not arrive, or undid that. A no-show is not a cancellation. `status` stays `CONFIRMED` and the payment is
+untouched, so refund nothing. Read `stayStatus`:
+
+- `NOSHOW`: the nights are on sale again on every booking site. Free the room in your own calendar.
+- `UPCOMING` again: the hotel undid the no-show. Hold the room.
+
+`changes` names what moved (`"stayStatus"`, `"rooms[0].status"`) and `previous` is the booking as it read
+before. Nothing else sends this message yet: other dates, one room of several cancelled or a payment taken
+at the desk still send none, so read `zs.directBookings.all({ since })` on a slow schedule too. An address
+that listed the other two types before 21 Nov 2026 keeps receiving exactly those two until its owner ticks
+the third.
 
 **Apply a website booking to your own calendar before you next send room counts.** The booking takes
 one room off the count the booking sites hold. If you then send your old count, that room goes back on
@@ -325,7 +343,8 @@ answers `replay: true` and moves no money. Your own cancel comes back to you as
 own cancel button, never from a background job.
 
 To try it with a test key, call `zs.sandbox.bookings.create({ …, otaName: "Website" })` and then cancel
-that booking. The nights come back and no money moves.
+that booking. The nights come back and no money moves. A test key cannot pretend a no-show: press Test on
+your address and choose `direct.booking.modified` to receive its sample.
 
 Guide: <https://docs.zimmerstack.com/website-bookings>
 
@@ -461,5 +480,6 @@ More words: <https://docs.zimmerstack.com/glossary>
 | <https://www.zimmerstack.com/partners/pms-companies#join> | Sign up, free |
 | <https://partner.zimmerstack.com/login> | The partner portal: your practice hotels, keys, webhooks, hotels and bills |
 | <https://github.com/zimmerstack/connect-starter> | A working app to start from, with a Deploy button |
+| <https://github.com/zimmerstack/connect-node> | This package's source, copied at every release |
 | <https://docs.zimmerstack.com/changelog> | What changed, and when |
 | <support@zimmerstack.com> | Questions, from any time zone. Answered within one working day. |

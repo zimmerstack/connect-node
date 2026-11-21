@@ -2,7 +2,7 @@
 // Do not edit: change the contract, then run `pnpm --dir apps/connect-sdk run generate`.
 
 /** This package's version, sent as the user agent so ZimmerStack can tell which client a request came from. */
-export const SDK_VERSION = "0.5.0";
+export const SDK_VERSION = "0.6.0";
 /** Where the API lives. The key is sent nowhere else. */
 export const API_ORIGIN = "https://api.zimmerstack.com";
 export const API_PREFIX = "/api/v1/connect-api/v1";
@@ -118,7 +118,7 @@ export const SCOPES = [
 export type Scope = (typeof SCOPES)[number];
 
 /** When a channel's price modifier takes effect. Show it where a person saves one. */
-export const MODIFIER_TAKES_EFFECT = "A modifier applies to prices sent to the channel after the change. Prices already on the channel stay as they are until those nights are sent again.";
+export const MODIFIER_TAKES_EFFECT = "Saving a modifier makes the channel manager send that channel every date again, so prices already on the channel move to the new rule within minutes.";
 
 /* ── the shapes, one per schema of the contract ── */
 
@@ -884,7 +884,7 @@ export interface ModifierResult {
   }>;
   /** false when the channel already held exactly these steps: nothing was sent to the channel manager and nothing was counted */
   changed: boolean;
-  /** When it takes effect. Always: "A modifier applies to prices sent to the channel after the change. Prices already on the channel stay as they are until those nights are sent again." */
+  /** When it takes effect. Always: "Saving a modifier makes the channel manager send that channel every date again, so prices already on the channel move to the new rule within minutes." */
   notice: string;
 }
 

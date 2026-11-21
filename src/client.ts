@@ -839,9 +839,9 @@ export class ZimmerStack {
      * Replace a channel's modifier with these steps (`[]` removes it). Needs the scope
      * channel-modifiers:write.
      *
-     * ONE CALL MOVES EVERY PRICE SENT TO THAT CHANNEL FROM THEN ON. Call it when a person saved the
-     * setting; never from a loop, a timer or a test against a live key. Prices already on the channel
-     * stay as they are until those nights are sent again (`rates.resend`).
+     * ONE CALL MOVES EVERY PRICE ON THAT CHANNEL. Call it when a person saved the setting; never from
+     * a loop, a timer or a test against a live key. The channel manager then sends that channel every
+     * date again, so prices already on sale move within minutes; no `rates.resend` is needed.
      */
     setModifier: (channelId: string, steps: ModifierStep[], options?: WriteOptions): Promise<ModifierResult> =>
       this.request("PUT /channels/{channelId}/modifier", { path: { channelId }, body: { steps }, ...options }),
@@ -882,7 +882,7 @@ export class ZimmerStack {
 
   readonly directBookings = {
     /**
-     * Website bookings, in the webhook's shape (`direct.booking.*`), cancellations included. Scope
+     * Website bookings, in the webhook's shape (`direct.booking.*`), cancellations and no-shows included. Scope
      * `direct-bookings:read`. Follow `nextCursor`, or use `all`.
      */
     list: (query?: Op<"GET /direct-bookings">["query"], options?: ReadOptions) => this.request("GET /direct-bookings", { query, ...options }),

@@ -2,7 +2,7 @@ import { MODIFIER_TAKES_EFFECT, channelPrice } from "@zimmerstack/connect";
 
 import { zs } from "@/lib/zimmerstack";
 
-/** Prices per channel (https://docs.zimmerstack.com/per-ota): read a channel's modifier, set it, send prices again. */
+/** Prices per channel (https://docs.zimmerstack.com/per-ota): read a channel's modifier and set it. */
 export async function sellHigherOnBookingCom(): Promise<void> {
   // #region three-calls
   // 1. Which channels, and what each one holds.
@@ -19,9 +19,7 @@ export async function sellHigherOnBookingCom(): Promise<void> {
   console.log(`4,500 goes to Booking.com as ${channelPrice(4500, result.modifier)}`); // 5110
   console.log(MODIFIER_TAKES_EFFECT); // the sentence to show where the person saves it
 
-  // 3. Nights already on the channel keep their price until sent again. Send them again, unchanged.
-  //    A hotel may ask a few times a day: make it a button of its own, never automatic.
-  const again = await zs().rates.resend();
-  console.log(`${again.cells} prices on their way`);
+  // 3. Nothing else: the channel manager now sends Booking.com every date again, so prices already
+  //    on sale there move to the new rule within minutes. No re-send is needed.
   // #endregion
 }
