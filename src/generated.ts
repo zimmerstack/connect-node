@@ -2,7 +2,7 @@
 // Do not edit: change the contract, then run `pnpm --dir apps/connect-sdk run generate`.
 
 /** This package's version, sent as the user agent so ZimmerStack can tell which client a request came from. */
-export const SDK_VERSION = "0.7.0";
+export const SDK_VERSION = "0.9.0";
 /** Where the API lives. The key is sent nowhere else. */
 export const API_ORIGIN = "https://api.zimmerstack.com";
 export const API_PREFIX = "/api/v1/connect-api/v1";
@@ -18,10 +18,14 @@ export const LIMITS = {
   "propertyWritesPerMinute": 60,
   "propertyCellsPerMinute": 20000,
   "ipRequestsPerMinute": 240,
+  "ipAuthFailuresPerMinute": 20,
+  "keyAuthFailuresPerMinute": 5,
+  "globalUnauthenticatedPerMinute": 1200,
+  "globalRequestsPerMinute": 3000,
   "maxUpdatesPerRequest": 1000,
   "maxCellsPerRequest": 5000,
   "maxBodyBytes": 1048576,
-  "horizonDays": 365,
+  "horizonDays": 500,
   "bookingsPerMinute": 20,
   "propertyBookingsPerMinute": 40,
   "propertyBookingsPerDay": 500,
@@ -74,6 +78,14 @@ export const ERROR_CODES = [
   "CATALOG_CONFLICT",
   "CATALOG_BUSY",
   "CHANNEL_MANAGER_ERROR",
+  "WEBHOOK_ENDPOINT_NOT_FOUND",
+  "WEBHOOK_DELIVERY_NOT_FOUND",
+  "WEBHOOK_ENDPOINT_LIMIT",
+  "WEBHOOK_ENDPOINT_NOT_ACTIVE",
+  "WEBHOOK_ENDPOINT_SUSPENDED",
+  "WEBHOOK_PAYLOAD_EXPIRED",
+  "WEBHOOK_ACCESS_ENDED",
+  "WEBHOOKS_UNAVAILABLE",
   "PROPERTY_REQUIRED",
   "PROPERTY_NOT_FOUND",
   "ARI_NOT_AUTHORITATIVE",
@@ -99,7 +111,21 @@ export const ERROR_CODES = [
   "CONFIRMATION_MISMATCH",
   "PROPERTY_NOT_REMOVABLE",
   "PROPERTY_BUSY",
-  "PRICE_UNAVAILABLE"
+  "PRICE_UNAVAILABLE",
+  "CONNECT_LINK_NOT_FOUND",
+  "CONNECT_LINKS_UNAVAILABLE",
+  "CHANNEL_NOT_AVAILABLE",
+  "LIVE_KEY_REQUIRED",
+  "NOT_READY",
+  "KEY_NOT_FOUND",
+  "KEY_LIMIT",
+  "KEY_REVOKED",
+  "KEY_ALREADY_ROTATING",
+  "SCOPES_INVALID",
+  "ALLOWED_CIDRS_INVALID",
+  "REASON_REQUIRED",
+  "SUPPORT_TICKET_NOT_FOUND",
+  "SUPPORT_TICKET_CLOSED"
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -115,12 +141,159 @@ export const SCOPES = [
   "bookings:read",
   "bookings:write",
   "bookings:payments",
-  "properties:write"
+  "properties:write",
+  "webhooks:manage",
+  "channels:connect",
+  "keys:manage",
+  "billing:read",
+  "support:write"
 ] as const;
 export type Scope = (typeof SCOPES)[number];
 
 /** When a channel's price modifier takes effect. Show it where a person saves one. */
 export const MODIFIER_TAKES_EFFECT = "Saving a modifier makes the channel manager send that channel every date again, so prices already on the channel move to the new rule within minutes.";
+
+/** Every notice an ARI write's answer may carry (`notices`): its stable code, its level, which writes it rides on and what it means. Branch on the code; show the notice's own message and action. */
+export const NOTICES = [
+  {
+    "code": "NOT_SOURCE_OF_TRUTH",
+    "level": "warning",
+    "on": "every write",
+    "means": "The hotel is not live for this software yet: prices and stay rules sent now are stored and wait for go-live, and of room counts only one that lowers what is on sale goes out."
+  },
+  {
+    "code": "ROOM_TYPE_NOT_LINKED",
+    "level": "warning",
+    "on": "availability",
+    "means": "The room type has no link to the channel manager: its count is kept and sent nowhere."
+  },
+  {
+    "code": "PLAN_NOT_LINKED",
+    "level": "warning",
+    "on": "rates, restrictions",
+    "means": "The rate plan has no link to the channel manager: its values are kept and sent nowhere."
+  },
+  {
+    "code": "PLAN_NOT_MAPPED",
+    "level": "warning",
+    "on": "rates, restrictions",
+    "means": "The rate plan is on the channel manager and no connected channel that is switched on sells it: nothing sells or stops because of this write."
+  },
+  {
+    "code": "ROOM_STILL_ON_SALE",
+    "level": "warning",
+    "on": "restrictions",
+    "means": "You stop-sold one rate plan; the room is still on sale through its other plans (otherRatePlanIds)."
+  },
+  {
+    "code": "OTA_LINKED_RATES_NOT_REACHED",
+    "level": "info",
+    "on": "restrictions",
+    "means": "A stop-sell does not reach a rate an OTA links on its own side: only the room's count closes it."
+  },
+  {
+    "code": "STAY_RULES_FROM_ANOTHER_PLAN",
+    "level": "warning",
+    "on": "restrictions",
+    "means": "On a channel, the OTA rate this plan sells takes its stay rules from another plan's row (otherRatePlanIds): a stay rule here alone does not reach it."
+  },
+  {
+    "code": "PER_OTA_PLANS_FOLLOW",
+    "level": "info",
+    "on": "rates, restrictions",
+    "means": "The plan has per-OTA plans: its price is copied onto them and they follow its stay rules."
+  },
+  {
+    "code": "PER_OTA_PLAN_FOLLOWS_PARENT",
+    "level": "warning",
+    "on": "rates, restrictions",
+    "means": "The plan you wrote is a per-OTA plan: its parent's price and stay rules replace what is set here."
+  },
+  {
+    "code": "VALUE_HELD",
+    "level": "warning",
+    "on": "rates, restrictions",
+    "means": "The value equals one the channel manager refused: it is held with its words, not sent again."
+  },
+  {
+    "code": "COUNT_WAS_REFUSED",
+    "level": "warning",
+    "on": "availability",
+    "means": "The last count sent for these nights was refused by the channel manager and nothing has landed since."
+  },
+  {
+    "code": "COUNT_ZERO_IS_NOT_STOP_SELL",
+    "level": "info",
+    "on": "availability",
+    "means": "You sent availability 0: a count that closes every plan and channel, and that the next OTA cancellation or your next count moves. Not a switch."
+  },
+  {
+    "code": "STOP_SELL_IS_NOT_A_COUNT",
+    "level": "info",
+    "on": "restrictions",
+    "means": "You sent a stop-sell: a switch on those plans. The room's count is untouched."
+  },
+  {
+    "code": "COUNT_OPEN_BUT_PLANS_STOPPED",
+    "level": "warning",
+    "on": "availability",
+    "means": "You sent a count above 0 for nights on which every plan of the room is stop-sold: the room does not sell."
+  },
+  {
+    "code": "NEW_DATES_OPEN_CLOSED",
+    "level": "warning",
+    "on": "availability",
+    "means": "The hotel's rule \"new dates open closed\" will set these nights to 0 when they come on sale."
+  },
+  {
+    "code": "FAR_NIGHTS_NEED_A_COUNT",
+    "level": "warning",
+    "on": "rates, restrictions",
+    "means": "A night past day 365 with no count of its own goes out closed, whatever its price or stay rules."
+  },
+  {
+    "code": "ENGINE_WILL_REPRICE",
+    "level": "warning",
+    "on": "rates",
+    "means": "The hotel's pricing engine is set to win: it replaces a price sent here at its next hourly update."
+  },
+  {
+    "code": "ENGINE_WILL_RECOUNT",
+    "level": "warning",
+    "on": "availability",
+    "means": "The hotel publishes the count its bookings work out: a count above 0 sent here is replaced. A 0 holds."
+  },
+  {
+    "code": "DRIFT_REPAIR_OFF",
+    "level": "info",
+    "on": "rates, restrictions",
+    "means": "The hotel switched the nightly repair off: a value changed on the channel manager's side is reported, not sent again."
+  }
+] as const;
+export type NoticeCode = (typeof NOTICES)[number]["code"];
+
+/** The three levels of a support ticket (`zs.supportTickets.create`): what each means and when ZimmerStack first replies. */
+export const SUPPORT_SEVERITIES = [
+  {
+    "severity": "many_hotels",
+    "name": "Many hotels",
+    "means": "2 or more of your hotels, or all of them, cannot take bookings or cannot send prices and rooms to the booking sites.",
+    "firstReply": "Within 60 minutes, 9:00 to 21:00 IST, every day. Opened outside those hours: by 10:00 IST."
+  },
+  {
+    "severity": "one_hotel",
+    "name": "One hotel",
+    "means": "One hotel cannot take bookings or cannot send prices and rooms to the booking sites.",
+    "firstReply": "Within one working day."
+  },
+  {
+    "severity": "question",
+    "name": "Question",
+    "means": "Anything else: how something works, a bill, a change you plan, a problem that stops nothing.",
+    "firstReply": "Within one working day."
+  }
+] as const;
+export type SupportSeverity = (typeof SUPPORT_SEVERITIES)[number]["severity"];
 
 /* ── the shapes, one per schema of the contract ── */
 
@@ -129,7 +302,7 @@ export interface Error {
   /** Human-readable, may change; branch on data.code */
   message: string;
   data: {
-    code: "API_KEY_INVALID" | "API_KEY_REVOKED" | "API_KEY_EXPIRED" | "CONNECT_API_NOT_CONFIGURED" | "IP_NOT_ALLOWED" | "SCOPE_MISSING" | "PROPERTY_UNAVAILABLE" | "CHANNEL_MANAGER_DISABLED" | "PMS_NOT_AVAILABLE" | "VALIDATION" | "RANGE_INVALID" | "HORIZON" | "TOO_MANY_UPDATES" | "TOO_MANY_CELLS" | "UNKNOWN_ROOM_TYPE" | "UNKNOWN_RATE_PLAN" | "CURRENCY_MISMATCH" | "RATE_LIMITED" | "NOTHING_ACCEPTED" | "BATCH_NOT_FOUND" | "IDEMPOTENCY_KEY_INVALID" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "STAY_INVALID" | "UNKNOWN_ROOM_TYPE_FOR_PLAN" | "OCCUPANCY_EXCEEDED" | "NO_AVAILABILITY" | "EXTERNAL_REFERENCE_REUSED" | "PAYMENT_NOT_ALLOWED" | "PAYMENT_EXCEEDS_TOTAL" | "TAXES_NOT_CONFIGURED" | "TAXES_INSIDE_RATES" | "BOOKING_NOT_FOUND" | "BOOKING_NOT_CANCELLABLE" | "MODULE_NOT_ENTITLED" | "SANDBOX_ONLY" | "ROOM_TYPE_NOT_FOUND" | "RATE_PLAN_NOT_FOUND" | "CATALOG_CONFLICT" | "CATALOG_BUSY" | "CHANNEL_MANAGER_ERROR" | "PROPERTY_REQUIRED" | "PROPERTY_NOT_FOUND" | "ARI_NOT_AUTHORITATIVE" | "ROUTE_NOT_FOUND" | "PAYLOAD_TOO_LARGE" | "AUTH_BACKEND_UNAVAILABLE" | "BOOKING_NOT_MODIFIABLE" | "SANDBOX_NOT_FOUND" | "SANDBOX_INCOMPLETE" | "WRITES_FROZEN" | "WRITES_SUSPENDED" | "SHIELD_UNAVAILABLE" | "CATALOG_LIMIT_REACHED" | "TOO_MANY_NEW_ENTITIES" | "RATE_OUT_OF_BAND" | "CHANNEL_NOT_FOUND" | "CHANNEL_SHARED" | "MODIFIER_OUT_OF_BAND" | "COMPANY_KEY_REQUIRED" | "BILLING_SETUP_REQUIRED" | "OWNER_HAS_ACCOUNT" | "SANDBOX_LIMIT" | "CONFIRMATION_MISMATCH" | "PROPERTY_NOT_REMOVABLE" | "PROPERTY_BUSY" | "PRICE_UNAVAILABLE";
+    code: "API_KEY_INVALID" | "API_KEY_REVOKED" | "API_KEY_EXPIRED" | "CONNECT_API_NOT_CONFIGURED" | "IP_NOT_ALLOWED" | "SCOPE_MISSING" | "PROPERTY_UNAVAILABLE" | "CHANNEL_MANAGER_DISABLED" | "PMS_NOT_AVAILABLE" | "VALIDATION" | "RANGE_INVALID" | "HORIZON" | "TOO_MANY_UPDATES" | "TOO_MANY_CELLS" | "UNKNOWN_ROOM_TYPE" | "UNKNOWN_RATE_PLAN" | "CURRENCY_MISMATCH" | "RATE_LIMITED" | "NOTHING_ACCEPTED" | "BATCH_NOT_FOUND" | "IDEMPOTENCY_KEY_INVALID" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "STAY_INVALID" | "UNKNOWN_ROOM_TYPE_FOR_PLAN" | "OCCUPANCY_EXCEEDED" | "NO_AVAILABILITY" | "EXTERNAL_REFERENCE_REUSED" | "PAYMENT_NOT_ALLOWED" | "PAYMENT_EXCEEDS_TOTAL" | "TAXES_NOT_CONFIGURED" | "TAXES_INSIDE_RATES" | "BOOKING_NOT_FOUND" | "BOOKING_NOT_CANCELLABLE" | "MODULE_NOT_ENTITLED" | "SANDBOX_ONLY" | "ROOM_TYPE_NOT_FOUND" | "RATE_PLAN_NOT_FOUND" | "CATALOG_CONFLICT" | "CATALOG_BUSY" | "CHANNEL_MANAGER_ERROR" | "WEBHOOK_ENDPOINT_NOT_FOUND" | "WEBHOOK_DELIVERY_NOT_FOUND" | "WEBHOOK_ENDPOINT_LIMIT" | "WEBHOOK_ENDPOINT_NOT_ACTIVE" | "WEBHOOK_ENDPOINT_SUSPENDED" | "WEBHOOK_PAYLOAD_EXPIRED" | "WEBHOOK_ACCESS_ENDED" | "WEBHOOKS_UNAVAILABLE" | "PROPERTY_REQUIRED" | "PROPERTY_NOT_FOUND" | "ARI_NOT_AUTHORITATIVE" | "ROUTE_NOT_FOUND" | "PAYLOAD_TOO_LARGE" | "AUTH_BACKEND_UNAVAILABLE" | "BOOKING_NOT_MODIFIABLE" | "SANDBOX_NOT_FOUND" | "SANDBOX_INCOMPLETE" | "WRITES_FROZEN" | "WRITES_SUSPENDED" | "SHIELD_UNAVAILABLE" | "CATALOG_LIMIT_REACHED" | "TOO_MANY_NEW_ENTITIES" | "RATE_OUT_OF_BAND" | "CHANNEL_NOT_FOUND" | "CHANNEL_SHARED" | "MODIFIER_OUT_OF_BAND" | "COMPANY_KEY_REQUIRED" | "BILLING_SETUP_REQUIRED" | "OWNER_HAS_ACCOUNT" | "SANDBOX_LIMIT" | "CONFIRMATION_MISMATCH" | "PROPERTY_NOT_REMOVABLE" | "PROPERTY_BUSY" | "PRICE_UNAVAILABLE" | "CONNECT_LINK_NOT_FOUND" | "CONNECT_LINKS_UNAVAILABLE" | "CHANNEL_NOT_AVAILABLE" | "LIVE_KEY_REQUIRED" | "NOT_READY" | "KEY_NOT_FOUND" | "KEY_LIMIT" | "KEY_REVOKED" | "KEY_ALREADY_ROTATING" | "SCOPES_INVALID" | "ALLOWED_CIDRS_INVALID" | "REASON_REQUIRED" | "SUPPORT_TICKET_NOT_FOUND" | "SUPPORT_TICKET_CLOSED";
     details?: unknown;
   };
 }
@@ -141,6 +314,8 @@ export interface Property {
   timezone: string;
   /** ISO 4217; every rate must be sent in it */
   currency: string;
+  /** Digits after the decimal point this currency's prices carry (ISO 4217): 2 for rupees, euros and dollars, 0 for yen. Every amount this API reads back as a decimal string has exactly this many (§2.10) */
+  decimals?: number;
   inventoryScope: "PMS_CM" | "CM_ONLY" | "PMS_CUTOVER" | "OWNER_SITE";
   /** true when this key is a zsk_test_ key on the owner's sandbox: nothing you send reaches a channel, and POST /sandbox/bookings simulates an OTA booking */
   sandbox: boolean;
@@ -196,9 +371,87 @@ export interface Property {
   };
 }
 
+export interface Limits {
+  /** ISO 8601 instant the windows were read */
+  asOf: string;
+  key: {
+    kind: "hotel" | "company";
+    mode: "live" | "test";
+    /** The hotel these budgets are for; null on a company key that named none */
+    propertyId: number | null;
+  };
+  /** The budgets the key guard and the routes measure: a minute, or a rolling day */
+  budgets: Array<{
+    /** The budget's name: data.scope on the 429 that names it */
+    scope: string;
+    /** Its name in the RateLimit-Policy / RateLimit headers; null when it is not reported there */
+    header: string | null;
+    /** Whose traffic is counted together */
+    per: string;
+    /** The window in words: 60 s sliding, one clock hour (UTC), rolling 24 hours */
+    window: string;
+    windowSeconds: number | null;
+    /** The most the window holds, for THIS key, property and company */
+    quota: number;
+    /** What is counted: requests, writes, cells, bookings… */
+    unit: string;
+    /** Counted in the window now; null when this route cannot read it */
+    used: number | null;
+    /** What is left; null with used */
+    remaining: number | null;
+    /** Seconds until it has room again when nothing is left; otherwise until the oldest counted item leaves the window. 0 when nothing is counted */
+    resetSeconds: number | null;
+    /** What is counted, in a sentence */
+    counts: string;
+  }>;
+  /** Where the integration stands and its long budgets; null on a company key that named no hotel */
+  shield: {
+    standing: {
+      level: "CLEAR" | "WATCH" | "PAUSED" | "SUSPENDED";
+      reason: string | null;
+      until: string | null;
+    };
+    /** The budgets over an hour and a day, with this property's own quotas */
+    budgets: Array<{
+      /** The budget's name: data.scope on the 429 that names it */
+      scope: string;
+      /** Its name in the RateLimit-Policy / RateLimit headers; null when it is not reported there */
+      header: string | null;
+      /** Whose traffic is counted together */
+      per: string;
+      /** The window in words: 60 s sliding, one clock hour (UTC), rolling 24 hours */
+      window: string;
+      windowSeconds: number | null;
+      /** The most the window holds, for THIS key, property and company */
+      quota: number;
+      /** What is counted: requests, writes, cells, bookings… */
+      unit: string;
+      /** Counted in the window now; null when this route cannot read it */
+      used: number | null;
+      /** What is left; null with used */
+      remaining: number | null;
+      /** Seconds until it has room again when nothing is left; otherwise until the oldest counted item leaves the window. 0 when nothing is counted */
+      resetSeconds: number | null;
+      /** What is counted, in a sentence */
+      counts: string;
+    }>;
+  } | null;
+  /** The most one request may carry, and the most of a thing that may exist */
+  caps: Array<{
+    scope: string;
+    per: string;
+    quota: number;
+    unit: string;
+    counts: string;
+  }>;
+  note: string;
+}
+
 export interface Catalog {
   /** ISO 4217; the property's, and the one every rate and booking is sent in */
   currency: string;
+  /** Digits after the decimal point this currency's prices carry (§2.10) */
+  decimals?: number;
   /** Every room type on the property, stable ids, in the order they were created */
   roomTypes: Array<{
     /** The number every availability write and every booking room names as roomTypeId */
@@ -231,6 +484,8 @@ export interface Catalog {
     /** The occupancy this plan is priced for; null = any */
     occupancy: number | null;
     currency: string;
+    /** The plan's standing price in major units, as a decimal string with the currency's own decimals ("4500.50"): the same field PUT /catalog/rate-plans takes. null = it follows the room type's base rate */
+    defaultRate?: string | null;
     /** false = a non-refundable plan */
     refundable: boolean;
     /** IN_SYNC the channel manager has it · PENDING / SENDING on its way · FAILED stopped retrying (the owner's screen offers Retry) · DRIFTED someone changed it inside the channel manager · NOT_LINKED saved here, never added there · DISABLED the property is not connected */
@@ -382,9 +637,9 @@ export interface RatePlansUpsert {
     occupancy?: number | null;
     /** false = a non-refundable plan; default true */
     refundable?: boolean;
-    /** The plan's standing price in MAJOR units (e.g. 4500 or "4500.00"), like every rate here: what new dates open at, mirrored to the channel manager. Omit to leave it; null = follow the room type's base rate */
+    /** The plan's standing price in MAJOR units, a number or a decimal string (4500 or "4500.50"), like every rate here: what new dates open at, mirrored to the channel manager. Kept to the currency's own decimals (§2.10). Omit to leave it; null = follow the room type's base rate */
     defaultRate?: number | string | null;
-    /** Deprecated: the same standing price in MINOR units (paise). Send defaultRate instead; never both */
+    /** Deprecated: the same standing price in hundredths of the major unit (450050 is 4500.50). Send defaultRate instead; never both */
     defaultRateMinor?: number | null;
   }>;
 }
@@ -409,6 +664,17 @@ export interface CatalogUpsertResult {
     /** Why not, when enabled is false (for example: a room type still has no rate plan) */
     reason: string | null;
   };
+  /** Standing prices this request sent that could not be kept exactly as sent, each with what was kept and why (§2.10). Absent when every price was kept as sent */
+  rounded?: Array<{
+    /** Where in the request the amount sat, for example "updates[3].rate" */
+    field: string;
+    /** The amount as it was sent */
+    sent: string;
+    /** The amount as it is kept, in major units with the currency's own decimals */
+    kept: string;
+    /** Why, in a sentence; may change, do not branch on it */
+    reason: string;
+  }>;
 }
 
 export interface CatalogDeleteResult {
@@ -451,6 +717,8 @@ export interface AvailabilityWrite {
     /** ABSOLUTE count of rooms of this type for sale on each night of the range */
     available: number;
   }>;
+  /** true: decide everything a real write decides (what would change, what is unchanged, what is held, what would be refused, the notices) and write nothing. Answers 200 with the preview instead of 202. Default false */
+  dryRun?: boolean;
 }
 
 export interface RatesRead {
@@ -458,12 +726,17 @@ export interface RatesRead {
   from: string;
   /** Hotel-local calendar date, YYYY-MM-DD */
   to: string;
+  /** ISO 4217: the property's currency, the one every rate here is in */
   currency: string;
+  /** Digits after the decimal point this currency's prices carry (ISO 4217): 2, 0 or 3 (§2.10) */
+  decimals?: number;
   cells: Array<{
     ratePlanId: number;
     /** Hotel-local calendar date, YYYY-MM-DD */
     date: string;
-    /** MINOR units (paise, cents) */
+    /** The price in MAJOR units, as a decimal string with the currency's own decimals: "4500.50" in rupees, "4500" in yen. The same value PUT /rates takes */
+    rate?: string;
+    /** The same price in HUNDREDTHS of the major unit (450050 is 4500.50), for every currency. That is the ISO 4217 minor unit only where the currency has two decimals: prefer rate */
     rateMinor: number;
     source: "MANUAL" | "BASE" | "ENGINE" | "CHANNEX_SEED" | "PLAN_DEFAULT" | "STANDING";
   }>;
@@ -478,11 +751,13 @@ export interface RatesWrite {
     /** Hotel-local calendar date, YYYY-MM-DD */
     dateTo: string;
     days?: Array<"mo" | "tu" | "we" | "th" | "fr" | "sa" | "su">;
-    /** Nightly sell price in MAJOR units (e.g. 4500 or "4500.00"), 1 to 21474836; rounded to a whole major unit for a property selling in rupees or in a currency without cents, kept to the cent otherwise (e.g. "89.50" in euros) */
+    /** Nightly sell price in MAJOR units, a number or a decimal string (4500, 4500.5 or "4500.50"), 1 to 21474836. Kept exactly, to the currency's own decimals (GET /property decimals): two for rupees, euros and dollars, none for yen. A price with more decimals than the currency has, a number or a decimal string alike, is rounded to them and named in the answer's rounded list */
     rate: number | string;
     /** ISO 4217; must equal the property's currency (GET /property) */
     currency: string;
   }>;
+  /** true: decide everything a real write decides (what would change, what is unchanged, what is held, what would be refused, the notices) and write nothing. Answers 200 with the preview instead of 202. Default false */
+  dryRun?: boolean;
 }
 
 export interface RestrictionsRead {
@@ -519,6 +794,8 @@ export interface RestrictionsWrite {
     minStayThrough?: number;
     maxStay?: number;
   }>;
+  /** true: decide everything a real write decides (what would change, what is unchanged, what is held, what would be refused, the notices) and write nothing. Answers 200 with the preview instead of 202. Default false */
+  dryRun?: boolean;
 }
 
 export interface WriteAccepted {
@@ -552,14 +829,64 @@ export interface WriteAccepted {
     ratePlanId: number;
     /** Hotel-local calendar date, YYYY-MM-DD */
     date: string;
-    /** The price this request set, MINOR units */
+    /** The price this request set, in hundredths of the major unit */
     rateMinor: number;
-    /** The plan's standing price, MINOR units */
+    /** The plan's standing price, in hundredths of the major unit */
     standingMinor: number;
+    /** The same price in major units, as a decimal string ("4500.50") */
+    rate?: string;
+    /** The plan's standing price in major units, as a decimal string */
+    standing?: string;
     message: string;
   }>;
+  /** Prices this request sent that could not be kept exactly as sent, each with what was kept and why (§2.10): more decimals than the currency has, or a fraction in a currency that has none. At most 20; absent when every price was kept as sent */
+  rounded?: Array<{
+    /** Where in the request the amount sat, for example "updates[3].rate" */
+    field: string;
+    /** The amount as it was sent */
+    sent: string;
+    /** The amount as it is kept, in major units with the currency's own decimals */
+    kept: string;
+    /** Why, in a sentence; may change, do not branch on it */
+    reason: string;
+  }>;
+  /** How many of the request's prices were rounded in all; present with rounded */
+  roundedCount?: number;
   /** true when the write was taken through the safety lane: the integration is paused or over a budget, and this write only closed inventory (§6.6) */
   lane?: boolean;
+  /** true on PUT /rates and PUT /restrictions for a hotel that is not live yet (§2.15): the values are in our record and are pushed when the hotel goes live (POST /go-live), not before. Absent on a live hotel, and on PUT /availability: a room count is sent at once, live or not */
+  heldUntilGoLive?: boolean;
+  /** What this write did not do, or will not go on doing, one plain sentence each with a stable code and what to do (§2.20). Warnings first. At most 20; absent when there is nothing to say */
+  notices?: Array<{
+    /** Stable: branch on it. A code you do not know is a notice added later; show its message */
+    code: "NOT_SOURCE_OF_TRUTH" | "ROOM_TYPE_NOT_LINKED" | "PLAN_NOT_LINKED" | "PLAN_NOT_MAPPED" | "ROOM_STILL_ON_SALE" | "OTA_LINKED_RATES_NOT_REACHED" | "STAY_RULES_FROM_ANOTHER_PLAN" | "PER_OTA_PLANS_FOLLOW" | "PER_OTA_PLAN_FOLLOWS_PARENT" | "VALUE_HELD" | "COUNT_WAS_REFUSED" | "COUNT_ZERO_IS_NOT_STOP_SELL" | "STOP_SELL_IS_NOT_A_COUNT" | "COUNT_OPEN_BUT_PLANS_STOPPED" | "NEW_DATES_OPEN_CLOSED" | "FAR_NIGHTS_NEED_A_COUNT" | "ENGINE_WILL_REPRICE" | "ENGINE_WILL_RECOUNT" | "DRIFT_REPAIR_OFF";
+    /** warning: our record shows what you sent does not do the whole job (something still sells, nothing is sent, a rule will undo it) · info: how it works, said so the next surprise is not one */
+    level: "warning" | "info";
+    /** What is going on, in a sentence a person can read; may change, do not branch on it */
+    message: string;
+    /** What to do about it, naming the call */
+    action: string;
+    /** The room type it is about */
+    roomTypeId?: number;
+    /** The rate plans it is about (the ones you wrote) */
+    ratePlanIds?: Array<number>;
+    /** Other plans it names: the ones still selling, the plan that carries the star, the per-OTA plans */
+    otherRatePlanIds?: Array<number>;
+    /** The connected channels it is about */
+    channels?: Array<{
+      channelId: string;
+      /** BookingCom, Expedia, Agoda, Goibibo, AirBNB, … */
+      kind: string;
+    }>;
+    /** The first night it is about */
+    dateFrom?: string;
+    /** The last night it is about */
+    dateTo?: string;
+    /** How many nights between dateFrom and dateTo it is about (they need not be consecutive) */
+    nights?: number;
+  }>;
+  /** How many more notices there were past the 20 listed; present only when some were left out */
+  noticesOmitted?: number;
 }
 
 export interface BatchStatus {
@@ -578,6 +905,18 @@ export interface BatchStatus {
   /** Cells of this batch the channel manager refused: held, not re-sent (§6.6). More than 0 reads failed */
   parkedCells: number;
   lastError: string | null;
+  /** Cells written to our record that reach no channel, by room type or rate plan. Not-linked cells are not counted as pending (they are sent nowhere); not-mapped ones are sent and counted like any other */
+  unreachable?: Array<{
+    /** The room type, on an availability batch */
+    roomTypeId?: number;
+    /** The rate plan, on a rates or restrictions batch */
+    ratePlanId?: number;
+    /** How many of the batch's cells are this room type's or plan's */
+    cells: number;
+    /** not-linked: the room type or plan has no link to the channel manager, so nothing was sent for it (GET /catalog shows its sync state); the batch reads failed. not-mapped: linked and sent, but no connected channel that is switched on sells the plan, by what was last read of the hotel's connections (nightly): nothing sells or stops because of it. A not-mapped plan does not fail the batch */
+    status: "not-linked" | "not-mapped";
+    message: string;
+  }>;
 }
 
 export interface SyncStatus {
@@ -601,6 +940,10 @@ export interface SyncStatus {
     lastPushAt: string | null;
     lastErrorAt: string | null;
     lastError: string | null;
+    /** Nights where the last read of the channel manager found it holding something other than our record (a price or stay rule changed in its own screen or on an OTA extranet). 0 = the last read agreed. The cells are pushed as channel.drift.detected */
+    driftCells?: number;
+    /** When that read found them; null when nothing differs */
+    driftSeenAt?: string | null;
   };
   /** Where this integration stands with the channel shield. Reads and bookings are never affected */
   shield: {
@@ -627,6 +970,18 @@ export interface SyncStatus {
     /** Cells of this batch the channel manager refused: held, not re-sent (§6.6). More than 0 reads failed */
     parkedCells: number;
     lastError: string | null;
+    /** Cells written to our record that reach no channel, by room type or rate plan. Not-linked cells are not counted as pending (they are sent nowhere); not-mapped ones are sent and counted like any other */
+    unreachable?: Array<{
+      /** The room type, on an availability batch */
+      roomTypeId?: number;
+      /** The rate plan, on a rates or restrictions batch */
+      ratePlanId?: number;
+      /** How many of the batch's cells are this room type's or plan's */
+      cells: number;
+      /** not-linked: the room type or plan has no link to the channel manager, so nothing was sent for it (GET /catalog shows its sync state); the batch reads failed. not-mapped: linked and sent, but no connected channel that is switched on sells the plan, by what was last read of the hotel's connections (nightly): nothing sells or stops because of it. A not-mapped plan does not fail the batch */
+      status: "not-linked" | "not-mapped";
+      message: string;
+    }>;
   } | null;
 }
 
@@ -844,6 +1199,8 @@ export interface SandboxBookingCreate {
   otaName?: "Booking.com" | "Expedia" | "Agoda" | "Airbnb" | "MakeMyTrip" | "Goibibo" | "Website";
   /** true = the channel collected the money (for Website: the guest paid online), so totalPaid equals the total; default false (pay at the property) */
   paidByOta?: boolean;
+  /** true = a cancellation that arrives with no booking before it (docs §2.4): the booking is recorded CANCELLED, no night is taken, and the one event sent is channel.booking.cancelled, with no created before it. What a hotel that moved from another channel manager sees when a guest cancels an older booking. Not for Website */
+  arrivesCancelled?: boolean;
 }
 
 export interface SandboxBookingModify {
@@ -885,6 +1242,8 @@ export interface Channels {
       type: "percent" | "fixed";
       /** How much: 18 with type percent is 18 %; 200 with type fixed is 200.00 in the property's currency. Always positive: choose decrease instead of a minus sign. Two decimals at most */
       value: number;
+      /** On a fixed step: the same amount in major units as a decimal string with the currency's own decimals ("200.00"). Absent on a percent step */
+      amount?: string;
     }> | null;
     /** A separate adjustment the owner set for this channel in the ZimmerStack Channels app, applied before the modifier. Read-only here; null = none */
     markupPlan: {
@@ -904,6 +1263,42 @@ export interface Channels {
   }>;
 }
 
+export interface RequestLog {
+  /** The instant the list starts at, as applied */
+  since: string;
+  /** How many days a request stays readable */
+  retentionDays: number;
+  /** Newest first. Facts about each call only: never a body, a query or a guest's data */
+  items: Array<{
+    /** The log entry's id */
+    id: string;
+    /** When the request arrived (ISO 8601, UTC) */
+    at: string;
+    /** GET, PUT, POST or DELETE */
+    method: string;
+    /** The route's pattern, for example "/bookings/:bookingId": never the address as sent, so no booking or guest id is kept */
+    route: string;
+    /** The HTTP status of the answer */
+    status: number;
+    /** data.code of a refusal (RATE_LIMITED, VALIDATION, …); null on a success */
+    errorCode: string | null;
+    /** The address the request came from. One you do not recognise is the first sign of a leaked key */
+    address: string | null;
+    /** How long the answer took, in milliseconds */
+    durationMs: number;
+    /** The X-Request-Id the answer carried: quote it to support */
+    requestId: string | null;
+    /** The hotel the request was about; null on a company key's call that names none (GET /properties) */
+    propertyId: number | null;
+    /** The key the request ran as; for a company key, its id on that hotel */
+    keyId: number | null;
+  }>;
+  /** More requests matched than limit: ask again with cursor = nextCursor */
+  more: boolean;
+  /** Pass as cursor for the next, older, page; null when there is no more */
+  nextCursor: string | null;
+}
+
 export interface ModifierWrite {
   /** The whole modifier, in the order it is applied; replaces what the channel holds. At most 5 steps. An empty list removes it: prices go to the channel as they are */
   steps: Array<{
@@ -911,8 +1306,10 @@ export interface ModifierWrite {
     action: "increase" | "decrease";
     /** percent of the price, or a fixed amount in MAJOR units of the property's currency */
     type: "percent" | "fixed";
-    /** How much: 18 with type percent is 18 %; 200 with type fixed is 200.00 in the property's currency. Always positive: choose decrease instead of a minus sign. Two decimals at most */
-    value: number;
+    /** How much, a number or a decimal string: 18 with type percent is 18 %; 200 or "200.00" with type fixed is 200.00 in the property's currency. Always positive: choose decrease instead of a minus sign. A fixed amount is kept to the currency's own decimals (§2.10); a percentage to two */
+    value: number | string;
+    /** What a read prints beside a fixed step. Leave it out, or send it back unchanged: when present it must equal value */
+    amount?: string;
   }>;
 }
 
@@ -929,11 +1326,28 @@ export interface ModifierResult {
     type: "percent" | "fixed";
     /** How much: 18 with type percent is 18 %; 200 with type fixed is 200.00 in the property's currency. Always positive: choose decrease instead of a minus sign. Two decimals at most */
     value: number;
+    /** On a fixed step: the same amount in major units as a decimal string with the currency's own decimals ("200.00"). Absent on a percent step */
+    amount?: string;
   }>;
   /** false when the channel already held exactly these steps: nothing was sent to the channel manager and nothing was counted */
   changed: boolean;
   /** When it takes effect. Always: "Saving a modifier makes the channel manager send that channel every date again, so prices already on the channel move to the new rule within minutes." */
   notice: string;
+  /** ISO 4217: the currency a fixed step's amount is in, the property's */
+  currency?: string;
+  /** Digits after the decimal point that currency carries (§2.10) */
+  decimals?: number;
+  /** Fixed amounts this request sent that could not be kept exactly as sent, each with what was kept and why (§2.10). Absent when every amount was kept as sent */
+  rounded?: Array<{
+    /** Where in the request the amount sat, for example "updates[3].rate" */
+    field: string;
+    /** The amount as it was sent */
+    sent: string;
+    /** The amount as it is kept, in major units with the currency's own decimals */
+    kept: string;
+    /** Why, in a sentence; may change, do not branch on it */
+    reason: string;
+  }>;
 }
 
 export interface RatesResendAccepted {
@@ -968,6 +1382,8 @@ export interface ChannelBookingsList {
   items: Array<{
     id: number;
     reference: string;
+    /** Our own counter of this booking's events: 1 on its first event, one more on each later one. A higher version is a later state whatever order deliveries arrived in. On a read it is the booking's current version (0: no event since versions began) */
+    version?: number;
     status: "CONFIRMED" | "CANCELLED";
     stayStatus: string;
     channel: {
@@ -990,6 +1406,8 @@ export interface ChannelBookingsList {
       email?: string | null;
       country: string | null;
       language: string | null;
+      /** Present when phone and email are null because of a rule, not because the booking has none: "retention" = the stay checked out more than 30 days ago (API reads and webhooks alike, a recovered or redelivered event included); "unavailable" = an API read that could not be logged just now, ask again. Absent otherwise */
+      contactWithheld?: "retention" | "unavailable";
     };
     guestNotes: string | null;
     occupancy: {
@@ -1028,6 +1446,12 @@ export interface ChannelBookingsList {
       commissionAmount: number | null;
       taxAmount: number | null;
       netPayoutAmount: number | null;
+      /** The OTA's own fee on top of its commission, where it sent one; null when it named none. Informational: netPayoutAmount is gross minus commission and does not subtract it */
+      feeAmount?: number | null;
+      /** How the guest pays, in the OTA's own word (for example "credit_card"); null when the OTA sent none. A label only */
+      paymentType?: string | null;
+      /** true when the OTA pays the property with a virtual card it issues: the guest does not pay the desk for the room. true or false only; the card itself is never sent */
+      virtualCard?: boolean;
     } | null;
     /** The hotel's own tax lines on this booking. Present only where the hotel has confirmed its taxes (outside India) and the booking has been assessed; absent on every other booking */
     taxes?: {
@@ -1050,13 +1474,1065 @@ export interface ChannelBookingsList {
   }>;
   /** More rows matched than limit: ask again with cursor = nextCursor */
   more: boolean;
-  /** Pass as cursor for the next page; null when there is no more */
+  /** Pass as cursor to resume exactly after this page. Returned on every page, the last one included (since 22 Nov 2026; null before that when there was no more): keep it and ask with it next time, so nothing is read twice and nothing is skipped */
+  nextCursor: string | null;
+}
+
+export interface ChannelBookingEvent {
+  type: "channel.booking.created" | "channel.booking.modified" | "channel.booking.cancelled";
+  apiVersion: string;
+  occurredAt: string;
+  property: {
+    id: number;
+    name: string;
+    currency: string;
+    timezone: string;
+  };
+  data: {
+    booking: ChannelBooking;
+  };
+  changes: Array<string> | null;
+  previous: {
+    stay?: {
+      checkIn: string;
+      checkOut: string;
+      nights: number;
+      dayUse: boolean;
+    };
+    amounts?: {
+      currency: string;
+      total: number;
+      paid: number;
+      balanceDue: number;
+      paymentCollect: "ota" | "property" | "unknown";
+      /** ISO 4217. Present only when the OTA sent the booking in another currency than the property's: the amounts in this booking (total, paid, balanceDue, each room's ratePerNight and amount) are then in THIS currency as the OTA sent them, not converted. Absent otherwise */
+      receivedCurrency?: string;
+    };
+    rooms?: Array<{
+      roomTypeId: number;
+      roomTypeName: string;
+      ratePlanId?: number | null;
+      mealPlan: "EP" | "CP" | "MAP" | "AP";
+      adults: number;
+      children: number;
+      checkIn: string;
+      checkOut: string;
+      nights: number;
+      dayUse: boolean;
+      ratePerNight: number;
+      amount: number;
+      status: string;
+    }>;
+    occupancy?: {
+      adults: number;
+      children: number;
+    };
+    guest?: {
+      fullName: string;
+    };
+    status?: "CONFIRMED" | "CANCELLED";
+  } | null;
+  truncated?: boolean;
+  id: string;
+  mode: "live" | "test";
+  /** The event's place in this hotel's log: one higher than the hotel's last event, across every type. The same number rides the webhook */
+  sequence: number;
+}
+
+export interface DirectBookingEvent {
+  type: "direct.booking.created" | "direct.booking.modified" | "direct.booking.cancelled";
+  apiVersion: string;
+  occurredAt: string;
+  property: {
+    id: number;
+    name: string;
+    currency: string;
+    timezone: string;
+  };
+  data: {
+    booking: ChannelBooking;
+  };
+  changes: Array<string> | null;
+  previous: {
+    stay?: {
+      checkIn: string;
+      checkOut: string;
+      nights: number;
+      dayUse: boolean;
+    };
+    amounts?: {
+      currency: string;
+      total: number;
+      paid: number;
+      balanceDue: number;
+      paymentCollect: "ota" | "property" | "unknown";
+      /** ISO 4217. Present only when the OTA sent the booking in another currency than the property's: the amounts in this booking (total, paid, balanceDue, each room's ratePerNight and amount) are then in THIS currency as the OTA sent them, not converted. Absent otherwise */
+      receivedCurrency?: string;
+    };
+    rooms?: Array<{
+      roomTypeId: number;
+      roomTypeName: string;
+      ratePlanId?: number | null;
+      mealPlan: "EP" | "CP" | "MAP" | "AP";
+      adults: number;
+      children: number;
+      checkIn: string;
+      checkOut: string;
+      nights: number;
+      dayUse: boolean;
+      ratePerNight: number;
+      amount: number;
+      status: string;
+    }>;
+    occupancy?: {
+      adults: number;
+      children: number;
+    };
+    guest?: {
+      fullName: string;
+    };
+    status?: "CONFIRMED" | "CANCELLED";
+    stayStatus?: string;
+  } | null;
+  truncated?: boolean;
+  id: string;
+  mode: "live" | "test";
+  /** The event's place in this hotel's log: one higher than the hotel's last event, across every type. The same number rides the webhook */
+  sequence: number;
+}
+
+export interface ChannelSyncEvent {
+  type: "channel.sync.alert" | "channel.sync.recovered";
+  apiVersion: string;
+  occurredAt: string;
+  property: {
+    id: number;
+    name: string;
+    currency: string;
+    timezone: string;
+  };
+  data: {
+    sync: {
+      event: string;
+      channelId: string | null;
+      channelKind: string | null;
+      message: string | null;
+      raisedAt: string;
+      resolvedAt: string | null;
+    };
+  };
+  changes: null;
+  previous: null;
+  id: string;
+  mode: "live" | "test";
+  /** The event's place in this hotel's log: one higher than the hotel's last event, across every type. The same number rides the webhook */
+  sequence: number;
+}
+
+export interface ChannelDriftEvent {
+  type: "channel.drift.detected" | "channel.drift.healed";
+  apiVersion: string;
+  occurredAt: string;
+  property: {
+    id: number;
+    name: string;
+    currency: string;
+    timezone: string;
+  };
+  data: {
+    drift: {
+      from: string;
+      to: string;
+      cellCount: number;
+      resentCount?: number;
+      healing?: boolean;
+      cells: Array<{
+        kind: "rate" | "restriction" | "availability";
+        ratePlanId?: number;
+        roomTypeId?: number;
+        date: string;
+        field: string;
+        yours: number | boolean | null;
+        channel: number | boolean | null;
+        resent?: boolean;
+      }>;
+      truncated: boolean;
+    };
+  };
+  changes: null;
+  previous: null;
+  id: string;
+  mode: "live" | "test";
+  /** The event's place in this hotel's log: one higher than the hotel's last event, across every type. The same number rides the webhook */
+  sequence: number;
+}
+
+export interface ChannelConnectEvent {
+  type: "channel.connect.completed" | "channel.connect.expired";
+  apiVersion: string;
+  occurredAt: string;
+  property: {
+    id: number;
+    name: string;
+    currency: string;
+    timezone: string;
+  };
+  data: {
+    connect: {
+      linkId: string;
+      channel: string;
+      channelName: string;
+      channelId: string | null;
+      selling: boolean;
+      opened?: boolean;
+      futureBookings?: "pulled" | "failed" | "none";
+    };
+  };
+  changes: null;
+  previous: null;
+  id: string;
+  mode: "live" | "test";
+  /** The event's place in this hotel's log: one higher than the hotel's last event, across every type. The same number rides the webhook */
+  sequence: number;
+}
+
+/** One event of a hotel's log: the webhook's own envelope, with its sequence. Tell them apart by type: channel.booking.* and direct.booking.* carry data.booking, channel.sync.* carries data.sync, channel.drift.* carries data.drift, channel.connect.* carries data.connect. A later edition may add a type: skip one you do not know and keep its sequence as your place */
+export type LoggedEvent = ChannelBookingEvent | DirectBookingEvent | ChannelSyncEvent | ChannelDriftEvent | ChannelConnectEvent;
+
+export interface EventsList {
+  /** Oldest first. Each item is the webhook's own envelope for that event (id, type, occurredAt, mode, sequence, property, data, changes, previous): see the webhook contract */
+  items: Array<LoggedEvent>;
+  /** More events follow: ask again with after = nextAfter */
+  more: boolean;
+  /** The sequence of the last item, or the after you sent when the page is empty. Keep it: it is your place in the log */
+  nextAfter: number;
+  /** The lowest sequence still kept for this hotel (events are kept 90 days); null when the log is empty. If it is more than one above your after, events in between are no longer kept: reconcile with GET /channel-bookings and GET /direct-bookings */
+  earliestSequence: number | null;
+  /** How long an event stays in the log */
+  retentionDays: number;
+}
+
+export interface SandboxNoShow {
+  /** true: the hotel undoes the no-show (the nights are taken again). Default false: the guest did not arrive */
+  undo?: boolean;
+}
+
+export interface SandboxSyncEvent {
+  /** alert: a problem is raised · recovered: the newest open simulated problem is cleared */
+  type: "channel.sync.alert" | "channel.sync.recovered";
+  /** Which problem. On an alert, default rate_error. On recovered, clear the newest open problem of this kind; absent, the newest open one of any kind */
+  event?: "rate_error" | "sync_error" | "disconnect_channel" | "settings_changed" | "inventory_out_of_sync";
+}
+
+export interface SandboxSyncEventView {
+  /** The problem: rate_error, sync_error, disconnect_channel, settings_changed or inventory_out_of_sync */
+  event: string;
+  /** The pretend channel the problem is on (GET /channels lists it); null for inventory_out_of_sync, which is the property's */
+  channelId: string | null;
+  channelKind: string | null;
+  raisedAt: string;
+  resolvedAt: string | null;
+  webhook: {
+    eventType: "channel.sync.alert" | "channel.sync.recovered";
+    /** The event is in the outbox; every endpoint on the sandbox that takes it receives it within seconds */
+    queued: boolean;
+  };
+}
+
+export interface WebhookEndpoint {
+  id: number;
+  /** live: the events of the hotels you may act on · test: your sandboxes'. A key manages the endpoints of its own mode */
+  mode: "live" | "test";
+  url: string;
+  description: string | null;
+  apiVersion: string;
+  eventTypes: Array<string>;
+  includeGuestContact: boolean;
+  status: "ACTIVE" | "PAUSED" | "SUSPENDED";
+  statusReason: string | null;
+  secretVersion: number;
+  /** While set, deliveries are also signed with the secret before the last rotation */
+  previousSecretExpiresAt: string | null;
+  notifyEmail: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** When it was last paused or suspended: where a recover usually starts */
+  lastStoppedAt: string | null;
+  health: {
+    state: "healthy" | "failing" | "paused" | "suspended";
+    consecutiveFailures: number;
+    failingSince: string | null;
+    lastSuccessAt: string | null;
+    lastFailureAt: string | null;
+    lastErrorMessage: string | null;
+  };
+}
+
+export interface WebhookEndpointList {
+  items: Array<{
+    id: number;
+    /** live: the events of the hotels you may act on · test: your sandboxes'. A key manages the endpoints of its own mode */
+    mode: "live" | "test";
+    url: string;
+    description: string | null;
+    apiVersion: string;
+    eventTypes: Array<string>;
+    includeGuestContact: boolean;
+    status: "ACTIVE" | "PAUSED" | "SUSPENDED";
+    statusReason: string | null;
+    secretVersion: number;
+    /** While set, deliveries are also signed with the secret before the last rotation */
+    previousSecretExpiresAt: string | null;
+    notifyEmail: string | null;
+    createdAt: string;
+    updatedAt: string;
+    /** When it was last paused or suspended: where a recover usually starts */
+    lastStoppedAt: string | null;
+    health: {
+      state: "healthy" | "failing" | "paused" | "suspended";
+      consecutiveFailures: number;
+      failingSince: string | null;
+      lastSuccessAt: string | null;
+      lastFailureAt: string | null;
+      lastErrorMessage: string | null;
+    };
+  }>;
+  /** The most endpoints a partner may have, both modes together */
+  limit: number;
+}
+
+export interface WebhookEndpointCreate {
+  /** https only, a public address; checked now and again at every send */
+  url: string;
+  description?: string;
+  /** The event types to receive; default the OTA booking events and both channel.sync events */
+  eventTypes?: Array<string>;
+  /** true: deliveries carry the guest's phone and email. Default false; change it at any time */
+  includeGuestContact?: boolean;
+  /** Where a failing endpoint is reported; default the partner's account email */
+  notifyEmail?: string;
+  /** Must be true: you confirm that guest booking details will be sent to this address */
+  dataAck: true;
+}
+
+export interface WebhookEndpointCreated {
+  endpoint: {
+    id: number;
+    /** live: the events of the hotels you may act on · test: your sandboxes'. A key manages the endpoints of its own mode */
+    mode: "live" | "test";
+    url: string;
+    description: string | null;
+    apiVersion: string;
+    eventTypes: Array<string>;
+    includeGuestContact: boolean;
+    status: "ACTIVE" | "PAUSED" | "SUSPENDED";
+    statusReason: string | null;
+    secretVersion: number;
+    /** While set, deliveries are also signed with the secret before the last rotation */
+    previousSecretExpiresAt: string | null;
+    notifyEmail: string | null;
+    createdAt: string;
+    updatedAt: string;
+    /** When it was last paused or suspended: where a recover usually starts */
+    lastStoppedAt: string | null;
+    health: {
+      state: "healthy" | "failing" | "paused" | "suspended";
+      consecutiveFailures: number;
+      failingSince: string | null;
+      lastSuccessAt: string | null;
+      lastFailureAt: string | null;
+      lastErrorMessage: string | null;
+    };
+  };
+  /** The signing secret (whsec_…). Shown in this answer only: store it now. null on a replay of the same request (X-Idempotent-Replay: true): we keep no copy to show again, so rotate the secret if the first answer was lost */
+  secret: string | null;
+}
+
+export interface WebhookEndpointUpdate {
+  url?: string;
+  description?: string | null;
+  eventTypes?: Array<string>;
+  /** The guest-contact switch: applies to every delivery made from now on */
+  includeGuestContact?: boolean;
+  notifyEmail?: string | null;
+}
+
+export interface WebhookSecretRotated {
+  /** The new signing secret. Shown in this answer only. null on a replay of the same request (X-Idempotent-Replay: true): rotate again if the first answer was lost */
+  secret: string | null;
+  secretVersion: number;
+  /** Until then deliveries are signed with both secrets, so you can switch without losing one */
+  previousExpiresAt: string;
+}
+
+export interface WebhookTest {
+  /** Any event type an endpoint can receive, or zimmerstack.ping; default zimmerstack.ping */
+  eventType?: "channel.booking.created" | "channel.booking.modified" | "channel.booking.cancelled" | "direct.booking.created" | "direct.booking.modified" | "direct.booking.cancelled" | "channel.sync.alert" | "channel.sync.recovered" | "channel.drift.detected" | "channel.drift.healed" | "channel.connect.completed" | "channel.connect.expired" | "platform.incident.opened" | "platform.incident.updated" | "platform.incident.resolved" | "support.ticket.replied" | "support.ticket.closed" | "zimmerstack.ping";
+}
+
+export interface WebhookRecover {
+  /** Queue again every subscribed event since this instant (ISO 8601); at most 90 days back */
+  since: string;
+}
+
+export interface WebhookRecoverResult {
+  /** Failed deliveries queued again */
+  reset: number;
+  /** Events that had no delivery and now have one */
+  created: number;
+  scanned: number;
+  /** More events than one run queues: run it again for the rest */
+  truncated: boolean;
+}
+
+export interface WebhookDeliveryList {
+  items: Array<{
+    id: string;
+    eventId: string;
+    eventType: string;
+    mode: "LIVE" | "TEST";
+    status: "PENDING" | "DELIVERED" | "FAILED";
+    attempts: number;
+    nextAttemptAt: string;
+    lastError: string | null;
+    occurredAt: string;
+    deliveredAt: string | null;
+    createdAt: string;
+    payloadBytes: number;
+    /** false once the stored body has been dropped (14 days); a redeliver rebuilds it from the event while that is kept (90 days) */
+    payloadAvailable: boolean;
+  }>;
+  nextCursor: string | null;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  eventId: string;
+  eventType: string;
+  mode: "LIVE" | "TEST";
+  status: "PENDING" | "DELIVERED" | "FAILED";
+  attempts: number;
+  nextAttemptAt: string;
+  lastError: string | null;
+  occurredAt: string;
+  deliveredAt: string | null;
+  createdAt: string;
+  payloadBytes: number;
+  /** false once the stored body has been dropped (14 days); a redeliver rebuilds it from the event while that is kept (90 days) */
+  payloadAvailable: boolean;
+}
+
+export interface WebhookDeliveryDetail {
+  id: string;
+  eventId: string;
+  eventType: string;
+  mode: "LIVE" | "TEST";
+  status: "PENDING" | "DELIVERED" | "FAILED";
+  attempts: number;
+  nextAttemptAt: string;
+  lastError: string | null;
+  occurredAt: string;
+  deliveredAt: string | null;
+  createdAt: string;
+  payloadBytes: number;
+  /** false once the stored body has been dropped (14 days); a redeliver rebuilds it from the event while that is kept (90 days) */
+  payloadAvailable: boolean;
+  /** The event as it was sent (the webhook's envelope); null once the stored body has been dropped (payloadAvailable: false) */
+  payload: unknown;
+  /** Every attempt, oldest first */
+  attempts_log: Array<{
+    id: string;
+    /** 1 for the first send, one more for each retry */
+    attemptNo: number;
+    startedAt: string;
+    durationMs: number;
+    /** SUCCESS, HTTP_ERROR, TIMEOUT, CONNECTION_ERROR, TLS_ERROR or BLOCKED_URL; more may come */
+    outcome: string;
+    /** The HTTP status your receiver answered; null when it never answered */
+    responseStatus: number | null;
+    /** The first 2 KB of what your receiver answered */
+    responseBodySnippet: string | null;
+    errorMessage: string | null;
+    /** The address your URL resolved to for this attempt */
+    resolvedIp: string | null;
+  }>;
+  request: {
+    /** The headers the delivery carried; the timestamp and the signature are shown as placeholders */
+    headers: Record<string, string>;
+  };
+}
+
+export interface WebhookEndpointResumed {
+  id: number;
+  /** live: the events of the hotels you may act on · test: your sandboxes'. A key manages the endpoints of its own mode */
+  mode: "live" | "test";
+  url: string;
+  description: string | null;
+  apiVersion: string;
+  eventTypes: Array<string>;
+  includeGuestContact: boolean;
+  status: "ACTIVE" | "PAUSED" | "SUSPENDED";
+  statusReason: string | null;
+  secretVersion: number;
+  /** While set, deliveries are also signed with the secret before the last rotation */
+  previousSecretExpiresAt: string | null;
+  notifyEmail: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** When it was last paused or suspended: where a recover usually starts */
+  lastStoppedAt: string | null;
+  health: {
+    state: "healthy" | "failing" | "paused" | "suspended";
+    consecutiveFailures: number;
+    failingSince: string | null;
+    lastSuccessAt: string | null;
+    lastFailureAt: string | null;
+    lastErrorMessage: string | null;
+  };
+  /** How many events the pause held; they are being sent now, oldest first */
+  heldEvents: number;
+}
+
+export interface WebhookEndpointDeleted {
+  id: number;
+  deleted: true;
+}
+
+export interface WebhookTestQueued {
+  /** The delivery in the log: GET /webhook-endpoints/{endpointId}/deliveries/{deliveryId} says what your receiver answered */
+  deliveryId: string;
+  eventId: string;
+  /** The type that was sent */
+  eventType: string;
+}
+
+export interface Status {
+  asOf: string;
+  /** The worst state of any component for your hotels; operational when nothing is open */
+  overall: "operational" | "degraded" | "partial_outage" | "major_outage";
+  components: Array<{
+    /** api · bookings_in · ari_out · ota:<booking site> */
+    id: string;
+    name: string;
+    kind: "platform" | "booking_site";
+    covers: string;
+    state: "operational" | "degraded" | "partial_outage" | "major_outage";
+    incidentIds: Array<number>;
+  }>;
+  incidents: {
+    open: Array<{
+      /** The same id the platform.incident.* webhooks carry */
+      id: number;
+      component: string;
+      componentName: string;
+      /** degraded: working, slower or later than usual · partial_outage: not working for some hotels or requests · major_outage: not working */
+      severity: "degraded" | "partial_outage" | "major_outage";
+      status: "investigating" | "identified" | "monitoring" | "resolved";
+      title: string;
+      startedAt: string;
+      updatedAt: string;
+      resolvedAt: string | null;
+      /** Which of YOUR hotels it touches */
+      properties: {
+        /** true: it touches every hotel */
+        all: boolean;
+        count: number;
+        ids: Array<number>;
+        truncated: boolean;
+      };
+      /** What we said, newest first */
+      updates: Array<{
+        at: string;
+        status: "investigating" | "identified" | "monitoring" | "resolved";
+        severity: "degraded" | "partial_outage" | "major_outage";
+        message: string;
+      }>;
+    }>;
+    /** Resolved in the last 7 days, so a consumer that missed the end still sees it ended */
+    recent: Array<{
+      /** The same id the platform.incident.* webhooks carry */
+      id: number;
+      component: string;
+      componentName: string;
+      /** degraded: working, slower or later than usual · partial_outage: not working for some hotels or requests · major_outage: not working */
+      severity: "degraded" | "partial_outage" | "major_outage";
+      status: "investigating" | "identified" | "monitoring" | "resolved";
+      title: string;
+      startedAt: string;
+      updatedAt: string;
+      resolvedAt: string | null;
+      /** Which of YOUR hotels it touches */
+      properties: {
+        /** true: it touches every hotel */
+        all: boolean;
+        count: number;
+        ids: Array<number>;
+        truncated: boolean;
+      };
+      /** What we said, newest first */
+      updates: Array<{
+        at: string;
+        status: "investigating" | "identified" | "monitoring" | "resolved";
+        severity: "degraded" | "partial_outage" | "major_outage";
+        message: string;
+      }>;
+    }>;
+  };
+  /** The availability we publish and report against. A target: it carries no service credits */
+  uptimeTarget: {
+    percent: number;
+    window: string;
+    credits: boolean;
+    what: string;
+  };
+  /** The address of the hosted status page once there is one; null until then, and this read is the status */
+  page: string | null;
+}
+
+export interface Billing {
+  /** true: ZimmerStack bills you for your hotels. false: it bills each hotel directly, and the rest of this answer is empty */
+  billed: boolean;
+  /** ISO 4217: the currency your invoices are in */
+  currency: string | null;
+  outstanding: {
+    /** What is owed on issued invoices, in major units as a decimal string ("944.00") */
+    amount: string;
+    /** The same, in hundredths of the major unit */
+    amountMinor: number;
+    openInvoices: number;
+    oldestDueAt: string | null;
+  };
+  onboardingFee: {
+    /** NOT_ASKED · WAIVED · LIVE_BEFORE (you were live before it began) · DUE (pay it in the portal before a live key or a hotel) · BILLING (its invoice is being issued) · PAID */
+    state: "NOT_ASKED" | "WAIVED" | "LIVE_BEFORE" | "DUE" | "BILLING" | "PAID";
+    /** The one-time fee, in major units as a decimal string ("944.00") */
+    amount: string;
+    currency: "USD";
+    invoiceNumber: string | null;
+  };
+  quota: {
+    /** Whether the quota is in force for you today; when false the numbers are what would apply */
+    applies: boolean;
+    why: "ACTIVE" | "NOT_STARTED" | "OUTSIDE_RULES" | "NOT_A_VENDOR";
+    /** YYYY-MM-DD: the day the quota and the unpaid-invoice days begin */
+    startsOn: string;
+    properties: {
+      /** How many hotels you may have live */
+      allowed: number;
+      /** How many you have */
+      used: number;
+      /** How many you may still add */
+      free: number;
+    };
+    /** What opens the next level; null at the top of the ladder, where ZimmerStack sets it by hand: ask with a support ticket */
+    next: {
+      /** The next level */
+      properties: number;
+      /** About what paying ahead opens it today, in US dollars; the portal's Pay ahead bills the exact amount in your currency, in major units as a decimal string ("944.00") */
+      payAhead: string;
+      /** The same, in hundredths of the major unit */
+      payAheadMinor: number;
+      currency: "USD";
+    } | null;
+    /** true when ZimmerStack set your quota by hand */
+    setByZimmerStack: boolean;
+    rule: string;
+  };
+  paidAhead: {
+    /** What is left of the money you paid ahead, before tax, in major units as a decimal string ("944.00") */
+    amount: string;
+    /** The same, in hundredths of the major unit */
+    amountMinor: number;
+    currency: string | null;
+  };
+  unpaidInvoiceDays: {
+    applies: boolean;
+    /** A monthly invoice is due by the end of this day of its month */
+    dueDay: number;
+    /** Still unpaid on this day: your hotels' booking-site connections are paused */
+    pauseDay: number;
+    /** This many days after the pause the hotels' service is ended (the month's last day when that is sooner) */
+    endAfterDays: number;
+    rule: string;
+    /** Your unpaid monthly invoices under these rules, oldest first, each with its own instants */
+    unpaid: Array<{
+      invoiceNumber: string | null;
+      dueAt: string;
+      pauseAt: string;
+      endAt: string;
+      /** false: issued too late in the month for the pause to happen by itself; ZimmerStack decides it by hand */
+      automatic: boolean;
+    }>;
+  };
+  /** What the channel manager charges above its included room types and rate plans for a hotel whose limit ZimmerStack raised: passed on at cost, nothing added */
+  atCost: {
+    currency: "USD";
+    what: string;
+    /** How a recorded line reaches an invoice today. BY_ZIMMERSTACK: recorded, and added to one of your invoices by our team. AUTOMATIC: your next monthly invoice carries it by itself, one line for each, at cost */
+    invoicing: "BY_ZIMMERSTACK" | "AUTOMATIC";
+    /** The same, in a sentence */
+    rule: string;
+    /** Recorded and on no invoice yet, in major units as a decimal string ("944.00") */
+    recorded: string;
+    /** The same, in hundredths of the major unit */
+    recordedMinor: number;
+    items: Array<{
+      /** YYYY-MM */
+      month: string;
+      property: {
+        id: number;
+        name: string;
+      };
+      kind: "room_types" | "rate_plans" | "rate_plans_per_room_type";
+      /** In words: "3 room types above the 20 included" */
+      what: string;
+      held: number;
+      included: number;
+      quantity: number;
+      /** The limit ZimmerStack allowed this hotel */
+      allowedLimit: number;
+      unitPrice: string;
+      amount: string;
+      amountMinor: number;
+      /** RECORDED: on no invoice yet · INVOICED: on one of your invoices · WAIVED: not charged */
+      status: "RECORDED" | "INVOICED" | "WAIVED";
+      /** Where the line stands for you. ON_INVOICE: on the issued invoice named in invoiceNumber · ON_NEXT_INVOICE: on your next monthly invoice (it is on the one being prepared, or will be put on it by itself) · ADDED_BY_ZIMMERSTACK: recorded; our team adds it to one of your invoices · NOT_CHARGED: waived */
+      standing: "ON_INVOICE" | "ON_NEXT_INVOICE" | "ADDED_BY_ZIMMERSTACK" | "NOT_CHARGED";
+      /** The invoice it is on, once that invoice is issued (GET /billing/invoices lists it); null until then */
+      invoiceNumber: string | null;
+    }>;
+  };
+}
+
+export interface BillingInvoices {
+  billed: boolean;
+  /** The 24 most recent issued invoices, newest first */
+  items: Array<{
+    /** The invoice's public id */
+    id: string;
+    number: string | null;
+    /** A month's hotels, the one-time onboarding fee, or money paid ahead */
+    about: "MONTH" | "ONBOARDING_FEE" | "PAID_AHEAD";
+    /** YYYY-MM-DD */
+    periodStart: string;
+    /** YYYY-MM-DD */
+    periodEnd: string;
+    currency: string;
+    /** OPEN · PARTIALLY_PAID · PAID (drafts and voided invoices are never listed) */
+    status: string;
+    issuedAt: string | null;
+    dueAt: string | null;
+    paidAt: string | null;
+    overdue: boolean;
+    /** The invoice before tax, in major units as a decimal string ("944.00") */
+    beforeTax: string;
+    /** The same, in hundredths of the major unit */
+    beforeTaxMinor: number;
+    /** Tax, in major units as a decimal string ("944.00") */
+    tax: string;
+    /** The same, in hundredths of the major unit */
+    taxMinor: number;
+    /** The invoice after tax, in major units as a decimal string ("944.00") */
+    total: string;
+    /** The same, in hundredths of the major unit */
+    totalMinor: number;
+    /** Paid so far, in major units as a decimal string ("944.00") */
+    paid: string;
+    /** Credited by credit notes, in major units as a decimal string ("944.00") */
+    credited: string;
+    /** Still owed, in major units as a decimal string ("944.00") */
+    balance: string;
+    /** The same, in hundredths of the major unit */
+    balanceMinor: number;
+    lines: Array<{
+      description: string;
+      hotel: string | null;
+      quantity: number;
+      kind: string;
+      total: string;
+      totalMinor: number;
+    }>;
+  }>;
+  payments: Array<{
+    receivedAt: string;
+    amount: string;
+    amountMinor: number;
+    currency: string;
+    method: string;
+    invoiceNumber: string | null;
+  }>;
+}
+
+export interface BillingNextInvoice {
+  billed: boolean;
+  /** When this was read. The invoice reads rooms, prices and the exchange rate again on the day it is made */
+  asOf: string;
+  /** YYYY-MM: the month the invoice is for */
+  month: string | null;
+  /** LIVE_ON_FIRST: every hotel live on the 1st, in full for the month starting · DAYS_LIVE: each hotel for the days it was live */
+  counting: "LIVE_ON_FIRST" | "DAYS_LIVE";
+  currency: string | null;
+  lines: Array<{
+    hotel: string;
+    propertyId: number | null;
+    /** CM = the channel manager */
+    module: string;
+    /** PRICE_LIST: read from a price list on bill day · AGREED_PRICE: a fixed price agreed with you · FIXED: this line keeps its own price */
+    priced: "PRICE_LIST" | "AGREED_PRICE" | "FIXED";
+    priceList: {
+      id: number | null;
+      name: string;
+      currency: string;
+    } | null;
+    /** The room band the hotel falls in, as the price list names it */
+    band: string | null;
+    /** Rooms counted for the price: what the hotel declared, or the most it has on sale on one night when that is more */
+    rooms: number | null;
+    /** Present only when it has more rooms on sale than it declared */
+    declaredRooms: number | null;
+    /** How many of your hotels are in the same room band: what picks a volume price */
+    hotelsInBand: number | null;
+    unit: "ROOM" | "HOTEL";
+    quantity: number;
+    unitPrice: string;
+    unitPriceMinor: number;
+    amount: string;
+    amountMinor: number;
+    /** When the list is in another currency: its own unit price and the latest rate on file today */
+    conversion: {
+      fromCurrency: string;
+      listUnitPrice: string;
+      rate: string;
+      rateDate: string;
+    } | null;
+  }>;
+  beforeTax: string;
+  beforeTaxMinor: number;
+  /** true: GST is added on top (a partner in India). false: nothing is added to these prices */
+  taxAddedOnTop: boolean;
+  /** Money you paid ahead that an invoice can still take off. It comes off only as far as your quota level stays covered, so the invoice says how much */
+  paidAhead: {
+    amount: string;
+    amountMinor: number;
+  };
+  /** Hotels or lines that are not on it today, each with why */
+  notes: Array<string>;
+  conversionMissing: {
+    from: string;
+    to: string;
+  } | null;
+  /** The channel manager's charges above its included room types and rate plans that are recorded and on no invoice yet, at cost */
+  atCost: {
+    /** BY_ZIMMERSTACK: our team adds these lines to an invoice by hand, so they are not counted in this answer's amounts. AUTOMATIC: this invoice carries each of them as a line of its own */
+    invoicing: "BY_ZIMMERSTACK" | "AUTOMATIC";
+    rule: string;
+    lines: Array<{
+      /** YYYY-MM: the month the channel manager counted it for */
+      month: string;
+      property: {
+        id: number;
+        name: string;
+      };
+      kind: "room_types" | "rate_plans" | "rate_plans_per_room_type";
+      /** In words: "3 room types above the 20 included" */
+      what: string;
+      /** The charge itself, in US dollars */
+      usdAmount: string;
+      usdAmountMinor: number;
+      /** AUTOMATIC: the same in this invoice's currency at the latest rate on file today, before tax; null when no rate is on file. BY_ZIMMERSTACK: null, the amount is on the invoice once our team has added the line */
+      amount: string | null;
+      amountMinor: number | null;
+    }>;
+    /** AUTOMATIC, and the invoice is not in US dollars: the latest rate on file today. The invoice reads the rate again on the day it is made */
+    conversion: {
+      fromCurrency: "USD";
+      rate: string;
+      rateDate: string;
+    } | null;
+    conversionMissing: {
+      from: string;
+      to: string;
+    } | null;
+    /** AUTOMATIC: what these lines add to this invoice before tax, beside beforeTax above (which is the hotel lines alone). BY_ZIMMERSTACK: 0.00 */
+    beforeTax: string;
+    beforeTaxMinor: number;
+  };
+}
+
+export interface SupportTicketCreate {
+  /** many_hotels: two or more of your hotels, or all, cannot take bookings or send prices and rooms · one_hotel: one hotel cannot · question: anything else. A test key's ticket is always question */
+  severity: "many_hotels" | "one_hotel" | "question";
+  /** One line: what is wrong, or what you are asking */
+  subject: string;
+  /** What you see, since when, and what you expected. Never paste a key, a secret or a guest's details: we already attach what our records show */
+  message: string;
+  /** The hotels affected, by their ids from GET /properties. Exactly one for one_hotel; two or more (or allProperties) for many_hotels; optional for question */
+  propertyIds?: Array<number>;
+  /** true: every hotel this key may act on is affected. Not together with propertyIds */
+  allProperties?: boolean;
+}
+
+export interface SupportMessageCreate {
+  /** Your reply. The ticket waits for ZimmerStack again from then */
+  message: string;
+}
+
+export interface SupportTicket {
+  /** Quote it in any mail about the ticket */
+  id: number;
+  subject: string;
+  severity: "many_hotels" | "one_hotel" | "question";
+  /** OPEN: waiting for ZimmerStack · ANSWERED: we replied, waiting for you · CLOSED */
+  status: "OPEN" | "ANSWERED" | "CLOSED";
+  /** The mode of the key that opened it. A key reads the tickets of its own mode */
+  mode: "live" | "test";
+  /** The hotels you said are affected */
+  properties: {
+    all: boolean;
+    ids: Array<number>;
+  };
+  openedAt: string;
+  lastMessageAt: string;
+  /** When ZimmerStack first answers (x-zimmerstack.support.severities) */
+  firstReply: {
+    /** The first-reply target of this severity, in words */
+    target: string;
+    /** The instant the first reply is due, for many_hotels; null where the target is a working day */
+    dueAt: string | null;
+    repliedAt: string | null;
+  };
+  closedAt: string | null;
+  closedBy: "partner" | "zimmerstack" | null;
+  /** The thread, oldest first */
+  messages: Array<{
+    id: number;
+    author: "partner" | "zimmerstack";
+    body: string;
+    createdAt: string;
+  }>;
+  diagnostic: {
+    takenAt: string;
+    windowHours: number;
+    requests: {
+      /** Your calls answered 400 or above in the window */
+      refused: number;
+      byCode: Array<{
+        status: number;
+        errorCode: string | null;
+        count: number;
+        lastAt: string | null;
+      }>;
+      lastRefused: Array<{
+        requestId: string | null;
+        at: string;
+        method: string;
+        route: string;
+        status: number;
+        errorCode: string | null;
+        propertyId: number | null;
+      }>;
+    } | null;
+    hotels: Array<{
+      propertyId: number;
+      inventory: {
+        pendingCells: number;
+        outOfSyncSince: string | null;
+        lastOkAt: string | null;
+      };
+      rates: {
+        waitingCells: number;
+        refusedCells: number;
+        lastPushAt: string | null;
+        lastErrorAt: string | null;
+        consecutiveFailures: number;
+      };
+      channelIssues: Array<{
+        event: string;
+        count: number;
+        since: string | null;
+      }>;
+      shield: {
+        level: string;
+        until: string | null;
+      };
+      usage: {
+        cellsChanged: number;
+        refusals: number;
+        refusedByChannelManager: number;
+      };
+    }>;
+    hotelsNotShown: number;
+    partner: {
+      shield: {
+        level: string;
+        until: string | null;
+      };
+      usage: {
+        cellsChanged: number;
+        refusals: number;
+        refusedByChannelManager: number;
+      };
+    } | null;
+    webhooks: Array<{
+      endpointId: number;
+      status: string;
+      consecutiveFailures: number;
+      failingSince: string | null;
+      lastSuccessAt: string | null;
+      lastFailureAt: string | null;
+      deliveries: {
+        delivered: number;
+        failed: number;
+        pending: number;
+      };
+      lastFailed: Array<{
+        deliveryId: string;
+        eventType: string;
+        attempts: number;
+        at: string;
+      }>;
+    }> | null;
+    /** Parts that could not be read at that moment */
+    incomplete: Array<string>;
+  } | null;
+}
+
+export interface SupportTicketList {
+  items: Array<{
+    /** Quote it in any mail about the ticket */
+    id: number;
+    subject: string;
+    severity: "many_hotels" | "one_hotel" | "question";
+    /** OPEN: waiting for ZimmerStack · ANSWERED: we replied, waiting for you · CLOSED */
+    status: "OPEN" | "ANSWERED" | "CLOSED";
+    /** The mode of the key that opened it. A key reads the tickets of its own mode */
+    mode: "live" | "test";
+    /** The hotels you said are affected */
+    properties: {
+      all: boolean;
+      ids: Array<number>;
+    };
+    openedAt: string;
+    lastMessageAt: string;
+    /** When ZimmerStack first answers (x-zimmerstack.support.severities) */
+    firstReply: {
+      /** The first-reply target of this severity, in words */
+      target: string;
+      /** The instant the first reply is due, for many_hotels; null where the target is a working day */
+      dueAt: string | null;
+      repliedAt: string | null;
+    };
+    closedAt: string | null;
+    closedBy: "partner" | "zimmerstack" | null;
+  }>;
   nextCursor: string | null;
 }
 
 export interface ChannelBooking {
   id: number;
   reference: string;
+  /** Our own counter of this booking's events: 1 on its first event, one more on each later one. A higher version is a later state whatever order deliveries arrived in. On a read it is the booking's current version (0: no event since versions began) */
+  version?: number;
   status: "CONFIRMED" | "CANCELLED";
   stayStatus: string;
   channel: {
@@ -1079,6 +2555,8 @@ export interface ChannelBooking {
     email?: string | null;
     country: string | null;
     language: string | null;
+    /** Present when phone and email are null because of a rule, not because the booking has none: "retention" = the stay checked out more than 30 days ago (API reads and webhooks alike, a recovered or redelivered event included); "unavailable" = an API read that could not be logged just now, ask again. Absent otherwise */
+    contactWithheld?: "retention" | "unavailable";
   };
   guestNotes: string | null;
   occupancy: {
@@ -1117,6 +2595,12 @@ export interface ChannelBooking {
     commissionAmount: number | null;
     taxAmount: number | null;
     netPayoutAmount: number | null;
+    /** The OTA's own fee on top of its commission, where it sent one; null when it named none. Informational: netPayoutAmount is gross minus commission and does not subtract it */
+    feeAmount?: number | null;
+    /** How the guest pays, in the OTA's own word (for example "credit_card"); null when the OTA sent none. A label only */
+    paymentType?: string | null;
+    /** true when the OTA pays the property with a virtual card it issues: the guest does not pay the desk for the room. true or false only; the card itself is never sent */
+    virtualCard?: boolean;
   } | null;
   /** The hotel's own tax lines on this booking. Present only where the hotel has confirmed its taxes (outside India) and the booking has been assessed; absent on every other booking */
   taxes?: {
@@ -1150,6 +2634,8 @@ export interface DirectBookingCancelResult {
   booking: {
     id: number;
     reference: string;
+    /** Our own counter of this booking's events: 1 on its first event, one more on each later one. A higher version is a later state whatever order deliveries arrived in. On a read it is the booking's current version (0: no event since versions began) */
+    version?: number;
     status: "CONFIRMED" | "CANCELLED";
     stayStatus: string;
     channel: {
@@ -1172,6 +2658,8 @@ export interface DirectBookingCancelResult {
       email?: string | null;
       country: string | null;
       language: string | null;
+      /** Present when phone and email are null because of a rule, not because the booking has none: "retention" = the stay checked out more than 30 days ago (API reads and webhooks alike, a recovered or redelivered event included); "unavailable" = an API read that could not be logged just now, ask again. Absent otherwise */
+      contactWithheld?: "retention" | "unavailable";
     };
     guestNotes: string | null;
     occupancy: {
@@ -1210,6 +2698,12 @@ export interface DirectBookingCancelResult {
       commissionAmount: number | null;
       taxAmount: number | null;
       netPayoutAmount: number | null;
+      /** The OTA's own fee on top of its commission, where it sent one; null when it named none. Informational: netPayoutAmount is gross minus commission and does not subtract it */
+      feeAmount?: number | null;
+      /** How the guest pays, in the OTA's own word (for example "credit_card"); null when the OTA sent none. A label only */
+      paymentType?: string | null;
+      /** true when the OTA pays the property with a virtual card it issues: the guest does not pay the desk for the room. true or false only; the card itself is never sent */
+      virtualCard?: boolean;
     } | null;
     /** The hotel's own tax lines on this booking. Present only where the hotel has confirmed its taxes (outside India) and the booking has been assessed; absent on every other booking */
     taxes?: {
@@ -1269,9 +2763,11 @@ export interface SandboxBooking {
   /** true when a night had no sandbox availability left — the booking lands anyway, as an OTA booking would */
   oversold: boolean;
   createdAt: string;
+  /** On a no-show simulation: the stay's own state after it, NOSHOW or UPCOMING. status above stays UPCOMING for a no-show, because the booking is not cancelled */
+  stayStatus?: string;
   /** What this call put on the wire for the sandbox's webhook endpoints */
   webhook: {
-    eventType: "channel.booking.created" | "channel.booking.modified" | "channel.booking.cancelled" | "direct.booking.created" | "direct.booking.cancelled";
+    eventType: "channel.booking.created" | "channel.booking.modified" | "channel.booking.cancelled" | "direct.booking.created" | "direct.booking.modified" | "direct.booking.cancelled";
     /** The event is in the outbox; every active endpoint on the sandbox receives it within seconds */
     queued: boolean;
   };
@@ -1304,13 +2800,877 @@ export interface SandboxBookingsList {
     /** true when a night had no sandbox availability left — the booking lands anyway, as an OTA booking would */
     oversold: boolean;
     createdAt: string;
+    /** On a no-show simulation: the stay's own state after it, NOSHOW or UPCOMING. status above stays UPCOMING for a no-show, because the booking is not cancelled */
+    stayStatus?: string;
     /** What this call put on the wire for the sandbox's webhook endpoints */
     webhook: {
-      eventType: "channel.booking.created" | "channel.booking.modified" | "channel.booking.cancelled" | "direct.booking.created" | "direct.booking.cancelled";
+      eventType: "channel.booking.created" | "channel.booking.modified" | "channel.booking.cancelled" | "direct.booking.created" | "direct.booking.modified" | "direct.booking.cancelled";
       /** The event is in the outbox; every active endpoint on the sandbox receives it within seconds */
       queued: boolean;
     };
   }>;
+}
+
+export interface ConnectLink {
+  /** The link's id: what the reads, the revoke and the webhook name it by. Never its token */
+  id: string;
+  propertyId: number;
+  /** Our key of the booking site */
+  channel: string;
+  /** Its name as a person reads it */
+  channelName: string;
+  /** pending: made, not opened · opened: someone is on the page · completed: Start selling was pressed · expired: it ran out first · revoked: you withdrew it, or a newer link replaced it */
+  status: "pending" | "opened" | "completed" | "expired" | "revoked";
+  createdAt: string;
+  /** The link opens until this instant */
+  expiresAt: string;
+  openedAt: string | null;
+  /** When the page saved the connection (paused until Start selling) */
+  connectedAt: string | null;
+  completedAt: string | null;
+  revokedAt: string | null;
+  /** The connection, as GET /channels lists it, once the page saved one */
+  channelId: string | null;
+  reference: string | null;
+  returnUrl: string | null;
+  /** The company key that made the link: named on the hotel's activity log beside everything the link does */
+  createdByKey: {
+    id: number;
+    name: string;
+    maskedKey: string;
+  };
+}
+
+export interface ConnectLinkList {
+  items: Array<{
+    /** The link's id: what the reads, the revoke and the webhook name it by. Never its token */
+    id: string;
+    propertyId: number;
+    /** Our key of the booking site */
+    channel: string;
+    /** Its name as a person reads it */
+    channelName: string;
+    /** pending: made, not opened · opened: someone is on the page · completed: Start selling was pressed · expired: it ran out first · revoked: you withdrew it, or a newer link replaced it */
+    status: "pending" | "opened" | "completed" | "expired" | "revoked";
+    createdAt: string;
+    /** The link opens until this instant */
+    expiresAt: string;
+    openedAt: string | null;
+    /** When the page saved the connection (paused until Start selling) */
+    connectedAt: string | null;
+    completedAt: string | null;
+    revokedAt: string | null;
+    /** The connection, as GET /channels lists it, once the page saved one */
+    channelId: string | null;
+    reference: string | null;
+    returnUrl: string | null;
+    /** The company key that made the link: named on the hotel's activity log beside everything the link does */
+    createdByKey: {
+      id: number;
+      name: string;
+      maskedKey: string;
+    };
+  }>;
+}
+
+export interface ConnectLinkCreate {
+  /** The hotel, by its id from GET /properties */
+  propertyId: number;
+  /** The booking site to connect: one link connects one */
+  channel: "bookingcom" | "gommt" | "agoda" | "expedia" | "tripcom" | "yatra" | "hostelworld" | "airbnb";
+  /** How long the link opens for, 1 to 168 hours; default 72 */
+  expiresInHours?: number;
+  /** Your own reference for this link; answered back by the reads, never shown to the hotel */
+  reference?: string;
+  /** Where the page offers to send the person when it is done (your own screen); https only */
+  returnUrl?: string;
+}
+
+export interface ConnectLinkCreated {
+  link: {
+    /** The link's id: what the reads, the revoke and the webhook name it by. Never its token */
+    id: string;
+    propertyId: number;
+    /** Our key of the booking site */
+    channel: string;
+    /** Its name as a person reads it */
+    channelName: string;
+    /** pending: made, not opened · opened: someone is on the page · completed: Start selling was pressed · expired: it ran out first · revoked: you withdrew it, or a newer link replaced it */
+    status: "pending" | "opened" | "completed" | "expired" | "revoked";
+    createdAt: string;
+    /** The link opens until this instant */
+    expiresAt: string;
+    openedAt: string | null;
+    /** When the page saved the connection (paused until Start selling) */
+    connectedAt: string | null;
+    completedAt: string | null;
+    revokedAt: string | null;
+    /** The connection, as GET /channels lists it, once the page saved one */
+    channelId: string | null;
+    reference: string | null;
+    returnUrl: string | null;
+    /** The company key that made the link: named on the hotel's activity log beside everything the link does */
+    createdByKey: {
+      id: number;
+      name: string;
+      maskedKey: string;
+    };
+  };
+  /** The address to send to the hotel's own person. It opens ONCE and is in this answer only: we keep a hash of its token, never the token. null on a replay of the same request (X-Idempotent-Replay: true): we keep no copy to show again, so make a new link if the first answer was lost (it withdraws this one) */
+  url: string | null;
+  /** What the hotel does at the booking site before it opens the link, naming our connectivity partner as that booking site lists it. For your own screen or message to the hotel; null where there is no such step */
+  hotelStep: string | null;
+  /** Earlier links for this hotel and booking site that nobody had opened, withdrawn by this one */
+  withdrawn: number;
+}
+
+export interface Readiness {
+  propertyId: number;
+  /** true: your software is already this hotel's source of truth; there is nothing to do */
+  live: boolean;
+  /** true: every check passed, so POST /go-live will switch it on (also true when live) */
+  ready: boolean;
+  /** The nights the checks looked at, in the hotel's calendar */
+  nights: {
+    from: string;
+    to: string;
+    count: number;
+  };
+  /** Which of the two ways nothing_stale passed: our record matches the channels, or your software sent the whole year first. null when it did not pass, or the hotel is already live */
+  passedBy: "record_matches" | "full_year_sent" | null;
+  checks: Array<{
+    id: "channel_manager" | "catalog_linked" | "prices_hold" | "nothing_stale";
+    passed: boolean;
+    /** What we found, in a sentence */
+    summary: string;
+    /** What to do when it did not pass; null when it passed */
+    action: string | null;
+    /** The numbers behind the sentence */
+    details?: Record<string, unknown>;
+  }>;
+}
+
+export interface GoLiveResult {
+  propertyId: number;
+  live: true;
+  /** true: the hotel was already live and nothing changed */
+  replay: boolean;
+  /** When this call switched it on; null on a replay */
+  wentLiveAt: string | null;
+  passedBy: "record_matches" | "full_year_sent" | null;
+  /** What happens now, and what to send */
+  next: Array<string>;
+}
+
+export interface HotelKey {
+  id: number;
+  propertyId: number;
+  name: string;
+  /** The key's first twelve characters: the only form it has after the answer that made it */
+  maskedKey: string;
+  mode: "live" | "test";
+  status: "ACTIVE" | "REVOKED";
+  scopes: Array<string>;
+  allowedCidrs: Array<string>;
+  createdAt: string;
+  lastUsedAt: string | null;
+  lastUsedIp: string | null;
+  expiresAt: string | null;
+  /** Set while a rotation's overlap runs: this key stops answering at this instant */
+  retireAt: string | null;
+  /** The key that replaced this one */
+  rotatedToId: number | null;
+  revokedAt: string | null;
+  revokedReason: string | null;
+}
+
+export interface HotelKeyList {
+  items: Array<{
+    id: number;
+    propertyId: number;
+    name: string;
+    /** The key's first twelve characters: the only form it has after the answer that made it */
+    maskedKey: string;
+    mode: "live" | "test";
+    status: "ACTIVE" | "REVOKED";
+    scopes: Array<string>;
+    allowedCidrs: Array<string>;
+    createdAt: string;
+    lastUsedAt: string | null;
+    lastUsedIp: string | null;
+    expiresAt: string | null;
+    /** Set while a rotation's overlap runs: this key stops answering at this instant */
+    retireAt: string | null;
+    /** The key that replaced this one */
+    rotatedToId: number | null;
+    revokedAt: string | null;
+    revokedReason: string | null;
+  }>;
+  /** The most active keys one hotel may hold, its owner's own included */
+  limit: number;
+}
+
+export interface HotelKeyCreate {
+  /** Your label for the key, shown to the hotel's owner too */
+  name: string;
+  /** What the key may do: any scope a hotel's own key may hold. Never a company key's own scopes */
+  scopes: Array<string>;
+  /** Addresses the key may be used from (IPv4 or IPv6, bare or CIDR); empty or absent: any address */
+  allowedCidrs?: Array<string>;
+  /** Optional end of life: a date (YYYY-MM-DD) or an ISO instant, at most two years away */
+  expiresAt?: string;
+}
+
+export interface HotelKeyCreated {
+  /** The secret. Shown in this answer only: store it now. We keep its hash. null on a replay of the same request (X-Idempotent-Replay: true): we keep no copy to show again, so rotate the key if the first answer was lost */
+  key: string | null;
+  view: {
+    id: number;
+    propertyId: number;
+    name: string;
+    /** The key's first twelve characters: the only form it has after the answer that made it */
+    maskedKey: string;
+    mode: "live" | "test";
+    status: "ACTIVE" | "REVOKED";
+    scopes: Array<string>;
+    allowedCidrs: Array<string>;
+    createdAt: string;
+    lastUsedAt: string | null;
+    lastUsedIp: string | null;
+    expiresAt: string | null;
+    /** Set while a rotation's overlap runs: this key stops answering at this instant */
+    retireAt: string | null;
+    /** The key that replaced this one */
+    rotatedToId: number | null;
+    revokedAt: string | null;
+    revokedReason: string | null;
+  };
+}
+
+export interface HotelKeyRotated {
+  /** The new secret. Shown in this answer only. null on a replay of the same request (X-Idempotent-Replay: true): we keep no copy to show again, so revoke the new key and mint one if the first answer was lost */
+  key: string | null;
+  /** The new key */
+  view: {
+    id: number;
+    propertyId: number;
+    name: string;
+    /** The key's first twelve characters: the only form it has after the answer that made it */
+    maskedKey: string;
+    mode: "live" | "test";
+    status: "ACTIVE" | "REVOKED";
+    scopes: Array<string>;
+    allowedCidrs: Array<string>;
+    createdAt: string;
+    lastUsedAt: string | null;
+    lastUsedIp: string | null;
+    expiresAt: string | null;
+    /** Set while a rotation's overlap runs: this key stops answering at this instant */
+    retireAt: string | null;
+    /** The key that replaced this one */
+    rotatedToId: number | null;
+    revokedAt: string | null;
+    revokedReason: string | null;
+  };
+  /** The key it replaces: it keeps answering until retireAt, 24 hours on */
+  retired: {
+    id: number;
+    propertyId: number;
+    name: string;
+    /** The key's first twelve characters: the only form it has after the answer that made it */
+    maskedKey: string;
+    mode: "live" | "test";
+    status: "ACTIVE" | "REVOKED";
+    scopes: Array<string>;
+    allowedCidrs: Array<string>;
+    createdAt: string;
+    lastUsedAt: string | null;
+    lastUsedIp: string | null;
+    expiresAt: string | null;
+    /** Set while a rotation's overlap runs: this key stops answering at this instant */
+    retireAt: string | null;
+    /** The key that replaced this one */
+    rotatedToId: number | null;
+    revokedAt: string | null;
+    revokedReason: string | null;
+  };
+}
+
+export interface HotelKeyRevoke {
+  /** Why, 3 to 500 characters: it is written on the key and on the hotel's activity log */
+  reason: string;
+}
+
+export interface WriteNotice {
+  /** Stable: branch on it. A code you do not know is a notice added later; show its message */
+  code: "NOT_SOURCE_OF_TRUTH" | "ROOM_TYPE_NOT_LINKED" | "PLAN_NOT_LINKED" | "PLAN_NOT_MAPPED" | "ROOM_STILL_ON_SALE" | "OTA_LINKED_RATES_NOT_REACHED" | "STAY_RULES_FROM_ANOTHER_PLAN" | "PER_OTA_PLANS_FOLLOW" | "PER_OTA_PLAN_FOLLOWS_PARENT" | "VALUE_HELD" | "COUNT_WAS_REFUSED" | "COUNT_ZERO_IS_NOT_STOP_SELL" | "STOP_SELL_IS_NOT_A_COUNT" | "COUNT_OPEN_BUT_PLANS_STOPPED" | "NEW_DATES_OPEN_CLOSED" | "FAR_NIGHTS_NEED_A_COUNT" | "ENGINE_WILL_REPRICE" | "ENGINE_WILL_RECOUNT" | "DRIFT_REPAIR_OFF";
+  /** warning: our record shows what you sent does not do the whole job (something still sells, nothing is sent, a rule will undo it) · info: how it works, said so the next surprise is not one */
+  level: "warning" | "info";
+  /** What is going on, in a sentence a person can read; may change, do not branch on it */
+  message: string;
+  /** What to do about it, naming the call */
+  action: string;
+  /** The room type it is about */
+  roomTypeId?: number;
+  /** The rate plans it is about (the ones you wrote) */
+  ratePlanIds?: Array<number>;
+  /** Other plans it names: the ones still selling, the plan that carries the star, the per-OTA plans */
+  otherRatePlanIds?: Array<number>;
+  /** The connected channels it is about */
+  channels?: Array<{
+    channelId: string;
+    /** BookingCom, Expedia, Agoda, Goibibo, AirBNB, … */
+    kind: string;
+  }>;
+  /** The first night it is about */
+  dateFrom?: string;
+  /** The last night it is about */
+  dateTo?: string;
+  /** How many nights between dateFrom and dateTo it is about (they need not be consecutive) */
+  nights?: number;
+}
+
+export interface WritePreview {
+  /** Nothing was written, queued or stored: this is what the same request would do without dryRun */
+  dryRun: true;
+  resource: "availability" | "rates" | "restrictions";
+  /** would-write: a real request answers 202 and writes wouldChangeCells · nothing-to-write: a real request answers 202 and writes nothing · would-refuse: a real request is refused as refusal says */
+  verdict: "would-write" | "nothing-to-write" | "would-refuse";
+  /** The refusal a real request would get now, when verdict is would-refuse; null otherwise */
+  refusal: {
+    /** The HTTP status the real request would get */
+    status: number;
+    /** Its data.code */
+    code: string;
+    message: string;
+    /** On RATE_LIMITED: the budget that would refuse */
+    scope?: string;
+    retryAfterSeconds?: number;
+  } | null;
+  /** Distinct cells after per-request coalescing (last write wins) */
+  requestedCells: number;
+  /** Cells that would be written and sent: what a real request counts against the hour and day budgets */
+  wouldChangeCells: number;
+  /** Cells our record and the channel manager already hold: nothing would be written or sent */
+  unchangedCells: number;
+  /** Cells whose value the channel manager refused before: held, not sent again */
+  heldCells: number;
+  /** Cells our record would refuse (wouldReject says why) */
+  wouldRejectCells: number;
+  /** true when a real request would be taken through the safety lane: the integration is paused or over a budget and this request only closes inventory (§6.6) */
+  lane: boolean;
+  /** The ranges that would be written, with the value sent. At most 50 */
+  wouldChange: Array<{
+    /** The room types this range is about (PUT /availability) */
+    roomTypeIds?: Array<number>;
+    /** The rate plans this range is about (PUT /rates, PUT /restrictions) */
+    ratePlanIds?: Array<number>;
+    /** Hotel-local calendar date, YYYY-MM-DD */
+    dateFrom: string;
+    /** Hotel-local calendar date, YYYY-MM-DD */
+    dateTo: string;
+    /** The weekdays of the range it covers; null = every night of it */
+    days: Array<"mo" | "tu" | "we" | "th" | "fr" | "sa" | "su"> | null;
+    /** Cells in this range (entities × nights) */
+    cells: number;
+    /** The count sent */
+    available?: number;
+    /** The price sent, as it would be kept: major units, the currency's own decimals */
+    rate?: string;
+    /** The same price in hundredths of the major unit */
+    rateMinor?: number;
+    stopSell?: boolean;
+    closedToArrival?: boolean;
+    closedToDeparture?: boolean;
+    minStayArrival?: number;
+    minStayThrough?: number;
+    maxStay?: number;
+    /** On a held range: the channel manager's own words for the refusal */
+    reason?: string;
+  }>;
+  /** Ranges left out of wouldChange past the cap */
+  wouldChangeOmitted?: number;
+  /** The ranges already held. At most 50 */
+  unchanged: Array<{
+    /** The room types this range is about (PUT /availability) */
+    roomTypeIds?: Array<number>;
+    /** The rate plans this range is about (PUT /rates, PUT /restrictions) */
+    ratePlanIds?: Array<number>;
+    /** Hotel-local calendar date, YYYY-MM-DD */
+    dateFrom: string;
+    /** Hotel-local calendar date, YYYY-MM-DD */
+    dateTo: string;
+    /** The weekdays of the range it covers; null = every night of it */
+    days: Array<"mo" | "tu" | "we" | "th" | "fr" | "sa" | "su"> | null;
+    /** Cells in this range (entities × nights) */
+    cells: number;
+    /** The count sent */
+    available?: number;
+    /** The price sent, as it would be kept: major units, the currency's own decimals */
+    rate?: string;
+    /** The same price in hundredths of the major unit */
+    rateMinor?: number;
+    stopSell?: boolean;
+    closedToArrival?: boolean;
+    closedToDeparture?: boolean;
+    minStayArrival?: number;
+    minStayThrough?: number;
+    maxStay?: number;
+    /** On a held range: the channel manager's own words for the refusal */
+    reason?: string;
+  }>;
+  unchangedOmitted?: number;
+  /** The ranges held after a refusal, each with the channel manager's words. At most 50 */
+  held: Array<{
+    /** The room types this range is about (PUT /availability) */
+    roomTypeIds?: Array<number>;
+    /** The rate plans this range is about (PUT /rates, PUT /restrictions) */
+    ratePlanIds?: Array<number>;
+    /** Hotel-local calendar date, YYYY-MM-DD */
+    dateFrom: string;
+    /** Hotel-local calendar date, YYYY-MM-DD */
+    dateTo: string;
+    /** The weekdays of the range it covers; null = every night of it */
+    days: Array<"mo" | "tu" | "we" | "th" | "fr" | "sa" | "su"> | null;
+    /** Cells in this range (entities × nights) */
+    cells: number;
+    /** The count sent */
+    available?: number;
+    /** The price sent, as it would be kept: major units, the currency's own decimals */
+    rate?: string;
+    /** The same price in hundredths of the major unit */
+    rateMinor?: number;
+    stopSell?: boolean;
+    closedToArrival?: boolean;
+    closedToDeparture?: boolean;
+    minStayArrival?: number;
+    minStayThrough?: number;
+    maxStay?: number;
+    /** On a held range: the channel manager's own words for the refusal */
+    reason?: string;
+  }>;
+  heldOmitted?: number;
+  /** Groups our record would refuse, as far as it can be told without writing: a policy that forbids a plan price, a count above the rooms free. A real write can still refuse a group for a reason only the write meets; it is then in its rejected list */
+  wouldReject: Array<{
+    cells: number;
+    error: string;
+  }>;
+  /** Accepted, but worth a look: an availability above the room type's room count (an oversell the channels will sell). Absent when there is nothing to say */
+  warnings?: Array<{
+    roomTypeId: number;
+    /** Rooms of this type in our record */
+    units: number;
+    /** The highest count this request set for it */
+    requested: number;
+    message: string;
+  }>;
+  /** Accepted, but far outside the plan's standing price, on a property whose price band only warns (§6.6). At most 20; absent when there is nothing to say */
+  priceWarnings?: Array<{
+    ratePlanId: number;
+    /** Hotel-local calendar date, YYYY-MM-DD */
+    date: string;
+    /** The price this request set, in hundredths of the major unit */
+    rateMinor: number;
+    /** The plan's standing price, in hundredths of the major unit */
+    standingMinor: number;
+    /** The same price in major units, as a decimal string ("4500.50") */
+    rate?: string;
+    /** The plan's standing price in major units, as a decimal string */
+    standing?: string;
+    message: string;
+  }>;
+  /** Prices that would not be kept exactly as sent (§2.10) */
+  rounded?: Array<{
+    /** Where in the request the amount sat, for example "updates[3].rate" */
+    field: string;
+    /** The amount as it was sent */
+    sent: string;
+    /** The amount as it is kept, in major units with the currency's own decimals */
+    kept: string;
+    /** Why, in a sentence; may change, do not branch on it */
+    reason: string;
+  }>;
+  roundedCount?: number;
+  /** What this write did not do, or will not go on doing, one plain sentence each with a stable code and what to do (§2.20). Warnings first. At most 20; absent when there is nothing to say */
+  notices?: Array<{
+    /** Stable: branch on it. A code you do not know is a notice added later; show its message */
+    code: "NOT_SOURCE_OF_TRUTH" | "ROOM_TYPE_NOT_LINKED" | "PLAN_NOT_LINKED" | "PLAN_NOT_MAPPED" | "ROOM_STILL_ON_SALE" | "OTA_LINKED_RATES_NOT_REACHED" | "STAY_RULES_FROM_ANOTHER_PLAN" | "PER_OTA_PLANS_FOLLOW" | "PER_OTA_PLAN_FOLLOWS_PARENT" | "VALUE_HELD" | "COUNT_WAS_REFUSED" | "COUNT_ZERO_IS_NOT_STOP_SELL" | "STOP_SELL_IS_NOT_A_COUNT" | "COUNT_OPEN_BUT_PLANS_STOPPED" | "NEW_DATES_OPEN_CLOSED" | "FAR_NIGHTS_NEED_A_COUNT" | "ENGINE_WILL_REPRICE" | "ENGINE_WILL_RECOUNT" | "DRIFT_REPAIR_OFF";
+    /** warning: our record shows what you sent does not do the whole job (something still sells, nothing is sent, a rule will undo it) · info: how it works, said so the next surprise is not one */
+    level: "warning" | "info";
+    /** What is going on, in a sentence a person can read; may change, do not branch on it */
+    message: string;
+    /** What to do about it, naming the call */
+    action: string;
+    /** The room type it is about */
+    roomTypeId?: number;
+    /** The rate plans it is about (the ones you wrote) */
+    ratePlanIds?: Array<number>;
+    /** Other plans it names: the ones still selling, the plan that carries the star, the per-OTA plans */
+    otherRatePlanIds?: Array<number>;
+    /** The connected channels it is about */
+    channels?: Array<{
+      channelId: string;
+      /** BookingCom, Expedia, Agoda, Goibibo, AirBNB, … */
+      kind: string;
+    }>;
+    /** The first night it is about */
+    dateFrom?: string;
+    /** The last night it is about */
+    dateTo?: string;
+    /** How many nights between dateFrom and dateTo it is about (they need not be consecutive) */
+    nights?: number;
+  }>;
+  /** How many more notices there were past the 20 listed; present only when some were left out */
+  noticesOmitted?: number;
+  /** What this dry run cost. It also counted as one request and one write on the key and the property */
+  spent: {
+    /** Cells this dry run was charged against the property's cells-per-minute budget: the same as the write it previews */
+    cells: number;
+  };
+  wouldSpend: {
+    /** Changed cells a real request would count against the hour and day budgets; a dry run counts none */
+    changedCells: number;
+  };
+  note: string;
+}
+
+export interface CloseRoomType {
+  /** ZimmerStack room type id (GET /catalog) */
+  roomTypeId: number;
+  /** Hotel-local calendar date, YYYY-MM-DD */
+  dateFrom: string;
+  /** Hotel-local calendar date, YYYY-MM-DD */
+  dateTo: string;
+  /** Omitted or empty = every night of the range */
+  days?: Array<"mo" | "tu" | "we" | "th" | "fr" | "sa" | "su">;
+  /** true: answer what the action would do, and do nothing */
+  dryRun?: boolean;
+}
+
+export interface ReopenRoomType {
+  /** ZimmerStack room type id (GET /catalog) */
+  roomTypeId: number;
+  /** Hotel-local calendar date, YYYY-MM-DD */
+  dateFrom: string;
+  /** Hotel-local calendar date, YYYY-MM-DD */
+  dateTo: string;
+  /** Omitted or empty = every night of the range */
+  days?: Array<"mo" | "tu" | "we" | "th" | "fr" | "sa" | "su">;
+  /** true: answer what the action would do, and do nothing */
+  dryRun?: boolean;
+  /** The count to put on sale on each reopened night. Omit it to put back the count each night held before the close; a night whose count was changed since is left as it is */
+  available?: number;
+}
+
+export interface CloseResult {
+  action: "close" | "reopen";
+  /** true: nothing was done; this is what the action would do */
+  dryRun: boolean;
+  roomTypeId: number;
+  /** Hotel-local calendar date, YYYY-MM-DD */
+  dateFrom: string;
+  /** Hotel-local calendar date, YYYY-MM-DD */
+  dateTo: string;
+  /** Nights the request named */
+  nights: number;
+  /** The room type's count: the one thing every rate of the room shares, on every channel */
+  count: {
+    /** close: nights whose count was set to 0 · reopen: nights whose count was put back or set */
+    changedNights: number;
+    /** close: nights already at 0 on our record and on the channel manager · reopen: nights whose count was left as it is */
+    unchangedNights: number;
+  };
+  /** Every rate plan of the room type, each with what was done to it */
+  ratePlans: Array<{
+    ratePlanId: number;
+    name: string;
+    /** close: nights stop-sell was switched on · reopen: nights it was lifted */
+    changedNights: number;
+    /** close: nights it was already on · reopen: nights left stopped because they were stopped before the close */
+    unchangedNights: number;
+    /** Per-OTA plans of this plan that take its stop-sell on the channel manager by themselves */
+    perOtaPlans: number;
+  }>;
+  /** What the action could not reach or did not touch, and why. Read it: a close that reads done here can still leave something selling */
+  notReached: Array<{
+    what: "room-type" | "rate-plan" | "ota-linked-rates" | "hotel";
+    ratePlanId?: number;
+    reason: "not-linked" | "not-mapped" | "not-ours" | "not-source-of-truth" | "no-count-before" | "changed-since" | "refused";
+    message: string;
+  }>;
+  /** reopen: nights of the range that POST /availability/close had not closed. They were left alone. Always 0 on a close */
+  skippedNights: number;
+  /** The writes this action made, to watch land with GET /batches/{batchId}. Empty on a dry run and when nothing had to change */
+  batches: Array<{
+    resource: "availability" | "restrictions";
+    batchId: string;
+    poll: string;
+  }>;
+  /** true when the close was taken through the safety lane: the integration is paused or over a budget (§6.6). A close always may; a reopen never does */
+  lane?: boolean;
+}
+
+export interface Explain {
+  /** When this was read (ISO 8601, UTC). Everything here is our record: no call was made to the channel manager */
+  asOf: string;
+  propertyId: number;
+  /** Hotel-local calendar date, YYYY-MM-DD */
+  date: string;
+  sandbox: boolean;
+  /** Our record is what the channels are sent; false = nothing written here reaches a channel */
+  sourceOfTruth: boolean;
+  /** What is going on, in plain sentences, most important first. For a person; do not parse */
+  summary: Array<string>;
+  roomType: {
+    id: number;
+    name: string;
+    linked: boolean;
+  };
+  count: {
+    /** null: not found in the writes we looked through (searched says how far) */
+    lastSent: {
+      /** When your software sent it (ISO 8601, UTC) */
+      at: string;
+      /** The batch that carried it: GET /batches/{batchId} */
+      batchId: string;
+      /** The key it was sent with */
+      keyId: number | null;
+      available: number;
+    } | null;
+    record: {
+      /** The count our record holds; null = none */
+      available: number | null;
+      /** software: your integration, through this API · person: someone on a ZimmerStack screen · engine: the hotel's pricing engine or its standing price · seed: copied from the channel manager when the hotel was set up, nobody's choice · policy: a rule of the hotel (new dates open closed) · channel: the channel manager's own number after an OTA booking or cancellation · nobody: we hold no value · unknown: set by hand, and we cannot tell by whom */
+      setBy: "software" | "person" | "engine" | "seed" | "policy" | "channel" | "nobody" | "unknown";
+      setAt: string | null;
+      /** true: the count differs from what your software last sent, because something moved it after (an OTA booking or cancellation the hotel follows, a person, a rule) */
+      movedSince: boolean;
+    };
+    channelManager: {
+      available: number | null;
+      /** null = never read: we do not know what it holds */
+      seenAt: string | null;
+      /** push: it took a count we sent · delta: it moved by one with a booking or cancellation · pull: we read it back */
+      how: "push" | "delta" | "pull" | null;
+    };
+    inSync: boolean | null;
+    /** A send of this night's count is waiting */
+    queued: boolean;
+    /** The sends of this night's count we still hold, newest first: the hotel's last inventory events that named it, and every refused or logged send */
+    pushes: Array<{
+      at: string;
+      /** What made the send: OVERRIDE_SET (a count somebody set, your software included), a booking, a cancellation, a sweep… */
+      cause: string;
+      /** Who caused it: an account of the hotel (your software writes as the hotel's owner), the channel manager's own movement, or a job of ours */
+      by: "software-or-person" | "channel" | "system";
+      /** The booking behind it, when there is one */
+      bookingId: number | null;
+      /** The count sent; null when the log does not hold it */
+      value: number | null;
+      /** sent: the channel manager took it · refused: it answered and refused the value (words) · failed: the call failed and is retried · queued: not sent yet · not-needed: nothing had to be sent (the channel manager had moved its own number, or the value was the same) · partly-sent: some nights of that send landed */
+      outcome: "sent" | "refused" | "failed" | "queued" | "not-needed" | "partly-sent";
+      /** The channel manager's own words, on a refusal or a failure */
+      words: string | null;
+    }>;
+    /** Set when POST /availability/close closed this night and it has not been reopened */
+    closed: {
+      at: string;
+      countBefore: number | null;
+      stopSellPlanIds: Array<number>;
+    } | null;
+  };
+  /** The bookings that hold or held a room of this type on this night. Ids and times only: never a guest's name, phone or email */
+  bookings: Array<{
+    bookingId: number;
+    /** The OTA, or null for a booking made at the hotel or on its website */
+    channel: string | null;
+    status: "CONFIRMED" | "CANCELLED";
+    bookedAt: string;
+    cancelledAt: string | null;
+    /** What each change of this booking did to the count, as the inventory log recorded it */
+    moves: Array<{
+      at: string;
+      cause: string;
+      outcome: string;
+    }>;
+  }>;
+  /** The plan asked for, or every plan of the room type */
+  plans: Array<{
+    ratePlanId: number;
+    name: string;
+    /** The plan exists on the channel manager; false = nothing is sent for it */
+    linked: boolean;
+    price: {
+      /** null: not found in the writes we looked through (searched says how far) */
+      lastSent: {
+        /** When your software sent it (ISO 8601, UTC) */
+        at: string;
+        /** The batch that carried it: GET /batches/{batchId} */
+        batchId: string;
+        /** The key it was sent with */
+        keyId: number | null;
+        rate: string;
+        rateMinor: number;
+      } | null;
+      record: {
+        /** The price our record holds, major units; null = none of its own */
+        rate: string | null;
+        rateMinor: number | null;
+        /** The layer the price comes from: MANUAL (set by software or a person) · SEED (copied from the channel manager at set-up) · ENGINE · PLAN_DEFAULT · … */
+        source: string | null;
+        /** software: your integration, through this API · person: someone on a ZimmerStack screen · engine: the hotel's pricing engine or its standing price · seed: copied from the channel manager when the hotel was set up, nobody's choice · policy: a rule of the hotel (new dates open closed) · channel: the channel manager's own number after an OTA booking or cancellation · nobody: we hold no value · unknown: set by hand, and we cannot tell by whom */
+        setBy: "software" | "person" | "engine" | "seed" | "policy" | "channel" | "nobody" | "unknown";
+      };
+      channelManager: {
+        rate: string | null;
+        rateMinor: number | null;
+        /** When we last saw what it holds: a nightly read, or a send it took. null = never: we do not know what it holds */
+        seenAt: string | null;
+      };
+      /** Our record and the channel manager's copy agree; null when one of them is not known */
+      inSync: boolean | null;
+    };
+    stayRules: {
+      lastSent: {
+        /** When your software sent it (ISO 8601, UTC) */
+        at: string;
+        /** The batch that carried it: GET /batches/{batchId} */
+        batchId: string;
+        /** The key it was sent with */
+        keyId: number | null;
+        values: {
+          stopSell?: boolean | null;
+          closedToArrival?: boolean | null;
+          closedToDeparture?: boolean | null;
+          minStayArrival?: number | null;
+          minStayThrough?: number | null;
+          maxStay?: number | null;
+        };
+      } | null;
+      record: {
+        stopSell: boolean | null;
+        closedToArrival: boolean | null;
+        closedToDeparture: boolean | null;
+        minStayArrival: number | null;
+        minStayThrough: number | null;
+        maxStay: number | null;
+        /** Who the stop-sell in our record came from */
+        stopSellSetBy: "software" | "person" | "engine" | "seed" | "policy" | "channel" | "nobody" | "unknown";
+      };
+      channelManager: {
+        stopSell: boolean | null;
+        closedToArrival: boolean | null;
+        closedToDeparture: boolean | null;
+        minStayArrival: number | null;
+        minStayThrough: number | null;
+        maxStay: number | null;
+        seenAt: string | null;
+      };
+      inSync: boolean | null;
+    };
+    /** We keep the last send of a price or stay rule, not every one */
+    send: {
+      /** When a price or stay rule of this night last reached the channel manager */
+      lastLandedAt: string | null;
+      /** A change is waiting to be sent since then; null = nothing waits */
+      queuedSince: string | null;
+      /** The value of this night the channel manager refused: held, not sent again until you send another value */
+      held: {
+        since: string;
+        /** The channel manager's own words */
+        words: string;
+        /** Daily retries made so far, of three */
+        retries: number;
+      } | null;
+      /** Nights running the nightly repair has sent this night again because the channel manager held another value; null = it is not being repaired */
+      driftResends: number | null;
+    };
+    family: {
+      /** The plan this one is a per-OTA plan of; null for an ordinary plan */
+      parent: {
+        ratePlanId: number;
+        name: string;
+      } | null;
+      perOtaPlans: Array<{
+        /** Its id here, when it is a plan of GET /catalog too */
+        ratePlanId: number | null;
+        name: string | null;
+        channelId: string | null;
+        channelKind: string | null;
+        /** follows-price: the channel manager reprices it when its parent is sent · own-price: its parent's price is copied onto it in the same send */
+        mode: "follows-price" | "own-price";
+      }>;
+    };
+    /** Every connection of the hotel, and whether it sells this plan. Empty when the connections have not been read */
+    channels: Array<{
+      channelId: string;
+      kind: string;
+      title: string | null;
+      /** The connection is switched on */
+      active: boolean;
+      /** The connection sells this plan */
+      mapped: boolean;
+      /** Through the plan's own rows, or the rows of one of its per-OTA plans; null when not mapped */
+      through: "itself" | "per-ota-plan" | null;
+      /** Plans that carry the star for an OTA rate this plan also sells here: that rate takes its stay rules from them */
+      starOnPlanIds: Array<number>;
+      /** Rows the OTA derives on its own side: they cannot be written from here */
+      readonlyRows: number;
+    }>;
+    /** mapped: a live connection sells it · not-mapped: none does, so a write for it changes nothing a guest sees · not-linked: it is not on the channel manager · unknown: the connections have not been read yet */
+    reach: "mapped" | "not-mapped" | "not-linked" | "unknown";
+  }>;
+  channels: {
+    /** false: this hotel's connections have not been read yet, so nothing is said about what they map */
+    known: boolean;
+    /** When the connections and what they map were last read from the channel manager (nightly) */
+    seenAt: string | null;
+    /** The connections that are switched on */
+    live: Array<{
+      channelId: string;
+      kind: string;
+      title: string | null;
+    }>;
+  };
+  /** The rules in force on this night that can change what you sent, each in a sentence */
+  policies: Array<{
+    code: "NOT_SOURCE_OF_TRUTH" | "ROOM_TYPE_NOT_LINKED" | "PLAN_NOT_LINKED" | "PLAN_NOT_MAPPED" | "ROOM_STILL_ON_SALE" | "OTA_LINKED_RATES_NOT_REACHED" | "STAY_RULES_FROM_ANOTHER_PLAN" | "PER_OTA_PLANS_FOLLOW" | "PER_OTA_PLAN_FOLLOWS_PARENT" | "VALUE_HELD" | "COUNT_WAS_REFUSED" | "COUNT_ZERO_IS_NOT_STOP_SELL" | "STOP_SELL_IS_NOT_A_COUNT" | "COUNT_OPEN_BUT_PLANS_STOPPED" | "NEW_DATES_OPEN_CLOSED" | "FAR_NIGHTS_NEED_A_COUNT" | "ENGINE_WILL_REPRICE" | "ENGINE_WILL_RECOUNT" | "DRIFT_REPAIR_OFF" | "FOLLOWS_OTA_MOVES" | "WRITES_PAUSED" | "CLOSED_BY_ACTION";
+    message: string;
+  }>;
+  searched: {
+    /** Writes of your software we looked through for lastSent, per resource, newest first */
+    batches: number;
+    /** The oldest of them; a write before it is not found here */
+    oldestBatchAt: string | null;
+    /** The hotel's newest inventory events we looked through for pushes */
+    inventoryEvents: number;
+  };
+}
+
+export interface SandboxFault {
+  /** refuse: the pretend channel refuses the next prices or stay rules, answering 200 with a warning as the channel manager does · throttle: it answers "too many requests" for a while · outage: it does not answer for a while */
+  kind: "refuse" | "throttle" | "outage";
+  /** refuse only: how many nights (rate plan × night) to refuse, in the order they are sent. Default 1 */
+  values?: number;
+  /** throttle and outage only: how long. Default 5 for a throttle, 10 for an outage (the alert needs five failed attempts, one a minute) */
+  minutes?: number;
+  /** refuse only: the pretend channel's words for the refusal, as your software will read them back */
+  message?: string;
+}
+
+export interface SandboxFaultView {
+  /** A fault is in force on this sandbox's pretend channel */
+  active: boolean;
+  kind: "refuse" | "throttle" | "outage" | null;
+  /** refuse: nights still to be refused */
+  remaining: number | null;
+  /** throttle, outage: when the pretend channel answers normally again (ISO 8601, UTC) */
+  until: string | null;
+  /** refuse: the pretend channel's words */
+  message: string | null;
+  setAt: string | null;
+  /** What to do next and what your software should then see, step by step */
+  watch: Array<string>;
 }
 
 /* ── every operation of the contract: what it takes and what it answers ── */
@@ -1324,6 +3684,8 @@ export interface Operations {
   "DELETE /properties/{propertyId}": { path: { propertyId: string | number }; query: { confirm: string }; body: undefined; response: PropertyRemoved };
   /** The property this key is for */
   "GET /property": { path: undefined; query: undefined; body: undefined; response: Property };
+  /** Every budget this key sits under, with what is left and when it refills */
+  "GET /limits": { path: undefined; query: undefined; body: undefined; response: Limits };
   /** Room types and rate plans with the numeric ids every write uses */
   "GET /catalog": { path: undefined; query: undefined; body: undefined; response: Catalog };
   /** Create or change room types by your own ref */
@@ -1337,15 +3699,27 @@ export interface Operations {
   /** Availability as our record holds it */
   "GET /availability": { path: undefined; query: { from?: string; to?: string }; body: undefined; response: AvailabilityRead };
   /** Set absolute availability */
-  "PUT /availability": { path: undefined; query: undefined; body: AvailabilityWrite; response: WriteAccepted };
+  "PUT /availability": { path: undefined; query: undefined; body: AvailabilityWrite; response: WritePreview | WriteAccepted };
   /** Rates as our record holds them (minor units) */
   "GET /rates": { path: undefined; query: { from?: string; to?: string }; body: undefined; response: RatesRead };
   /** Set nightly sell prices */
-  "PUT /rates": { path: undefined; query: undefined; body: RatesWrite; response: WriteAccepted };
+  "PUT /rates": { path: undefined; query: undefined; body: RatesWrite; response: WritePreview | WriteAccepted };
   /** Restrictions as our record holds them */
   "GET /restrictions": { path: undefined; query: { from?: string; to?: string }; body: undefined; response: RestrictionsRead };
   /** Set stay restrictions */
-  "PUT /restrictions": { path: undefined; query: undefined; body: RestrictionsWrite; response: WriteAccepted };
+  "PUT /restrictions": { path: undefined; query: undefined; body: RestrictionsWrite; response: WritePreview | WriteAccepted };
+  /** Close a room type on these nights, everywhere */
+  "POST /availability/close": { path: undefined; query: undefined; body: CloseRoomType; response: CloseResult };
+  /** Reopen a room type that POST /availability/close closed */
+  "POST /availability/reopen": { path: undefined; query: undefined; body: ReopenRoomType; response: CloseResult };
+  /** Explain this night */
+  "GET /explain": { path: undefined; query: { roomTypeId: number; ratePlanId?: number; date: string }; body: undefined; response: Explain };
+  /** Sandbox: the fault in force on the pretend channel */
+  "GET /sandbox/faults": { path: undefined; query: undefined; body: undefined; response: SandboxFaultView };
+  /** Sandbox: make the pretend channel refuse, throttle or go down */
+  "POST /sandbox/faults": { path: undefined; query: undefined; body: SandboxFault; response: SandboxFaultView };
+  /** Sandbox: end the fault */
+  "DELETE /sandbox/faults": { path: undefined; query: undefined; body: undefined; response: SandboxFaultView };
   /** Has what you sent reached the channels? */
   "GET /sync": { path: undefined; query: undefined; body: undefined; response: SyncStatus };
   /** Bookings the API created on this property, newest first */
@@ -1356,6 +3730,8 @@ export interface Operations {
   "GET /bookings/{bookingId}": { path: { bookingId: string | number }; query: undefined; body: undefined; response: Booking };
   /** Cancel a booking the API created; its nights re-open on the channels */
   "POST /bookings/{bookingId}/cancel": { path: { bookingId: string | number }; query: undefined; body: BookingCancel; response: Booking };
+  /** This key's own requests of the last 7 days */
+  "GET /requests": { path: undefined; query: { since?: string; status?: string; limit?: number; cursor?: string }; body: undefined; response: RequestLog };
   /** The connected channels and their open issues, from our record */
   "GET /channels": { path: undefined; query: undefined; body: undefined; response: Channels };
   /** Set one channel's price modifier */
@@ -1366,6 +3742,56 @@ export interface Operations {
   "GET /channel-bookings": { path: undefined; query: { since?: string; status?: "CONFIRMED" | "CANCELLED"; limit?: number; cursor?: string }; body: undefined; response: ChannelBookingsList };
   /** One channel booking, the webhook's shape */
   "GET /channel-bookings/{bookingId}": { path: { bookingId: string | number }; query: undefined; body: undefined; response: ChannelBooking };
+  /** Your company webhook endpoints (a software partner's company key) */
+  "GET /webhook-endpoints": { path: undefined; query: undefined; body: undefined; response: WebhookEndpointList };
+  /** Create a company webhook endpoint */
+  "POST /webhook-endpoints": { path: undefined; query: undefined; body: WebhookEndpointCreate; response: WebhookEndpointCreated };
+  /** One company webhook endpoint, with its health */
+  "GET /webhook-endpoints/{endpointId}": { path: { endpointId: string | number }; query: undefined; body: undefined; response: WebhookEndpoint };
+  /** Change an endpoint: its address, event types, notify email or the guest-contact switch */
+  "PATCH /webhook-endpoints/{endpointId}": { path: { endpointId: string | number }; query: undefined; body: WebhookEndpointUpdate; response: WebhookEndpoint };
+  /** Delete an endpoint */
+  "DELETE /webhook-endpoints/{endpointId}": { path: { endpointId: string | number }; query: undefined; body: undefined; response: WebhookEndpointDeleted };
+  /** Pause an endpoint: its events are held, not dropped */
+  "POST /webhook-endpoints/{endpointId}/pause": { path: { endpointId: string | number }; query: undefined; body: undefined; response: WebhookEndpoint };
+  /** Resume an endpoint: what the pause held goes out, oldest first */
+  "POST /webhook-endpoints/{endpointId}/resume": { path: { endpointId: string | number }; query: undefined; body: undefined; response: WebhookEndpointResumed };
+  /** Rotate the signing secret */
+  "POST /webhook-endpoints/{endpointId}/rotate-secret": { path: { endpointId: string | number }; query: undefined; body: undefined; response: WebhookSecretRotated };
+  /** Send a test event of any type */
+  "POST /webhook-endpoints/{endpointId}/test": { path: { endpointId: string | number }; query: undefined; body: WebhookTest; response: WebhookTestQueued };
+  /** Recover since: queue again what the endpoint missed */
+  "POST /webhook-endpoints/{endpointId}/recover": { path: { endpointId: string | number }; query: undefined; body: WebhookRecover; response: WebhookRecoverResult };
+  /** The delivery log, newest first */
+  "GET /webhook-endpoints/{endpointId}/deliveries": { path: { endpointId: string | number }; query: { status?: "PENDING" | "DELIVERED" | "FAILED"; eventType?: string; mode?: "LIVE" | "TEST"; from?: string; to?: string; cursor?: string; limit?: number }; body: undefined; response: WebhookDeliveryList };
+  /** One delivery: the body as sent, and every attempt */
+  "GET /webhook-endpoints/{endpointId}/deliveries/{deliveryId}": { path: { endpointId: string | number; deliveryId: string | number }; query: undefined; body: undefined; response: WebhookDeliveryDetail };
+  /** Send one delivery again */
+  "POST /webhook-endpoints/{endpointId}/deliveries/{deliveryId}/redeliver": { path: { endpointId: string | number; deliveryId: string | number }; query: undefined; body: undefined; response: WebhookDelivery };
+  /** The components and the incidents that touch your hotels */
+  "GET /status": { path: undefined; query: undefined; body: undefined; response: Status };
+  /** Your bills at a glance: what is owed, your quota, money paid ahead (a software partner's company key) */
+  "GET /billing": { path: undefined; query: undefined; body: undefined; response: Billing };
+  /** Your issued invoices, each before and after tax */
+  "GET /billing/invoices": { path: undefined; query: undefined; body: undefined; response: BillingInvoices };
+  /** What your next monthly invoice is made of, hotel by hotel */
+  "GET /billing/next-invoice": { path: undefined; query: undefined; body: undefined; response: BillingNextInvoice };
+  /** Your support tickets, newest first (a software partner's company key) */
+  "GET /support-tickets": { path: undefined; query: { status?: "OPEN" | "ANSWERED" | "CLOSED"; cursor?: string; limit?: number }; body: undefined; response: SupportTicketList };
+  /** Open a support ticket */
+  "POST /support-tickets": { path: undefined; query: undefined; body: SupportTicketCreate; response: SupportTicket };
+  /** One ticket: the thread and the diagnostic */
+  "GET /support-tickets/{ticketId}": { path: { ticketId: string | number }; query: undefined; body: undefined; response: SupportTicket };
+  /** Reply on a ticket */
+  "POST /support-tickets/{ticketId}/messages": { path: { ticketId: string | number }; query: undefined; body: SupportMessageCreate; response: SupportTicket };
+  /** Close your own ticket */
+  "POST /support-tickets/{ticketId}/close": { path: { ticketId: string | number }; query: undefined; body: undefined; response: SupportTicket };
+  /** Sandbox: a website booking's no-show, or its undo (the real direct.booking.modified) */
+  "POST /sandbox/bookings/{bookingId}/no-show": { path: { bookingId: string | number }; query: undefined; body: SandboxNoShow; response: SandboxBooking };
+  /** Sandbox: a channel problem, or its end (the real channel.sync.alert / channel.sync.recovered) */
+  "POST /sandbox/sync-events": { path: undefined; query: undefined; body: SandboxSyncEvent; response: SandboxSyncEventView };
+  /** The hotel's ordered event log */
+  "GET /events": { path: undefined; query: { after?: number; limit?: number }; body: undefined; response: EventsList };
   /** The bookings guests made on the hotel's own website, in the webhook's shape */
   "GET /direct-bookings": { path: undefined; query: { since?: string; status?: "CONFIRMED" | "CANCELLED"; limit?: number; cursor?: string }; body: undefined; response: ChannelBookingsList };
   /** One website booking, the webhook's shape */
@@ -1382,6 +3808,26 @@ export interface Operations {
   "POST /sandbox/bookings/{bookingId}/modify": { path: { bookingId: string | number }; query: undefined; body: SandboxBookingModify; response: SandboxBooking };
   /** One accepted write and whether it has landed */
   "GET /batches/{batchId}": { path: { batchId: string | number }; query: undefined; body: undefined; response: BatchStatus };
+  /** Your one-time connect links (a software partner's company key) */
+  "GET /connect-links": { path: undefined; query: { propertyId?: number; limit?: number }; body: undefined; response: ConnectLinkList };
+  /** Make a one-time connect link for one hotel and one booking site */
+  "POST /connect-links": { path: undefined; query: undefined; body: ConnectLinkCreate; response: ConnectLinkCreated };
+  /** Where one connect link stands */
+  "GET /connect-links/{linkId}": { path: { linkId: string | number }; query: undefined; body: undefined; response: ConnectLink };
+  /** Withdraw a connect link */
+  "POST /connect-links/{linkId}/revoke": { path: { linkId: string | number }; query: undefined; body: undefined; response: ConnectLink };
+  /** Is this hotel ready for your software to be its source of truth? */
+  "GET /readiness": { path: undefined; query: undefined; body: undefined; response: Readiness };
+  /** Make your software this hotel's source of truth */
+  "POST /go-live": { path: undefined; query: undefined; body: undefined; response: GoLiveResult };
+  /** The keys you made on a hotel (a software partner's company key) */
+  "GET /properties/{propertyId}/keys": { path: { propertyId: string | number }; query: undefined; body: undefined; response: HotelKeyList };
+  /** Mint a key on a hotel */
+  "POST /properties/{propertyId}/keys": { path: { propertyId: string | number }; query: undefined; body: HotelKeyCreate; response: HotelKeyCreated };
+  /** Rotate a key you made on a hotel */
+  "POST /properties/{propertyId}/keys/{keyId}/rotate": { path: { propertyId: string | number; keyId: string | number }; query: undefined; body: undefined; response: HotelKeyRotated };
+  /** Revoke a key you made on a hotel */
+  "POST /properties/{propertyId}/keys/{keyId}/revoke": { path: { propertyId: string | number; keyId: string | number }; query: undefined; body: HotelKeyRevoke; response: HotelKey };
 }
 export type OperationKey = keyof Operations;
 
@@ -1391,6 +3837,7 @@ export const OPERATIONS: Record<OperationKey, { idempotent: boolean; bodyRequire
   "POST /properties": { idempotent: true, bodyRequired: true },
   "DELETE /properties/{propertyId}": { idempotent: false, bodyRequired: false },
   "GET /property": { idempotent: false, bodyRequired: false },
+  "GET /limits": { idempotent: false, bodyRequired: false },
   "GET /catalog": { idempotent: false, bodyRequired: false },
   "PUT /catalog/room-types": { idempotent: true, bodyRequired: true },
   "DELETE /catalog/room-types/{roomTypeId}": { idempotent: false, bodyRequired: false },
@@ -1402,22 +3849,64 @@ export const OPERATIONS: Record<OperationKey, { idempotent: boolean; bodyRequire
   "PUT /rates": { idempotent: true, bodyRequired: true },
   "GET /restrictions": { idempotent: false, bodyRequired: false },
   "PUT /restrictions": { idempotent: true, bodyRequired: true },
+  "POST /availability/close": { idempotent: true, bodyRequired: true },
+  "POST /availability/reopen": { idempotent: true, bodyRequired: true },
+  "GET /explain": { idempotent: false, bodyRequired: false },
+  "GET /sandbox/faults": { idempotent: false, bodyRequired: false },
+  "POST /sandbox/faults": { idempotent: true, bodyRequired: true },
+  "DELETE /sandbox/faults": { idempotent: false, bodyRequired: false },
   "GET /sync": { idempotent: false, bodyRequired: false },
   "GET /bookings": { idempotent: false, bodyRequired: false },
   "POST /bookings": { idempotent: true, bodyRequired: true },
   "GET /bookings/{bookingId}": { idempotent: false, bodyRequired: false },
-  "POST /bookings/{bookingId}/cancel": { idempotent: false, bodyRequired: false },
+  "POST /bookings/{bookingId}/cancel": { idempotent: true, bodyRequired: false },
+  "GET /requests": { idempotent: false, bodyRequired: false },
   "GET /channels": { idempotent: false, bodyRequired: false },
   "PUT /channels/{channelId}/modifier": { idempotent: true, bodyRequired: true },
   "POST /rates/resend": { idempotent: true, bodyRequired: false },
   "GET /channel-bookings": { idempotent: false, bodyRequired: false },
   "GET /channel-bookings/{bookingId}": { idempotent: false, bodyRequired: false },
+  "GET /webhook-endpoints": { idempotent: false, bodyRequired: false },
+  "POST /webhook-endpoints": { idempotent: true, bodyRequired: true },
+  "GET /webhook-endpoints/{endpointId}": { idempotent: false, bodyRequired: false },
+  "PATCH /webhook-endpoints/{endpointId}": { idempotent: true, bodyRequired: true },
+  "DELETE /webhook-endpoints/{endpointId}": { idempotent: false, bodyRequired: false },
+  "POST /webhook-endpoints/{endpointId}/pause": { idempotent: true, bodyRequired: false },
+  "POST /webhook-endpoints/{endpointId}/resume": { idempotent: true, bodyRequired: false },
+  "POST /webhook-endpoints/{endpointId}/rotate-secret": { idempotent: true, bodyRequired: false },
+  "POST /webhook-endpoints/{endpointId}/test": { idempotent: true, bodyRequired: false },
+  "POST /webhook-endpoints/{endpointId}/recover": { idempotent: true, bodyRequired: true },
+  "GET /webhook-endpoints/{endpointId}/deliveries": { idempotent: false, bodyRequired: false },
+  "GET /webhook-endpoints/{endpointId}/deliveries/{deliveryId}": { idempotent: false, bodyRequired: false },
+  "POST /webhook-endpoints/{endpointId}/deliveries/{deliveryId}/redeliver": { idempotent: true, bodyRequired: false },
+  "GET /status": { idempotent: false, bodyRequired: false },
+  "GET /billing": { idempotent: false, bodyRequired: false },
+  "GET /billing/invoices": { idempotent: false, bodyRequired: false },
+  "GET /billing/next-invoice": { idempotent: false, bodyRequired: false },
+  "GET /support-tickets": { idempotent: false, bodyRequired: false },
+  "POST /support-tickets": { idempotent: true, bodyRequired: true },
+  "GET /support-tickets/{ticketId}": { idempotent: false, bodyRequired: false },
+  "POST /support-tickets/{ticketId}/messages": { idempotent: true, bodyRequired: true },
+  "POST /support-tickets/{ticketId}/close": { idempotent: true, bodyRequired: false },
+  "POST /sandbox/bookings/{bookingId}/no-show": { idempotent: true, bodyRequired: false },
+  "POST /sandbox/sync-events": { idempotent: true, bodyRequired: true },
+  "GET /events": { idempotent: false, bodyRequired: false },
   "GET /direct-bookings": { idempotent: false, bodyRequired: false },
   "GET /direct-bookings/{bookingId}": { idempotent: false, bodyRequired: false },
   "POST /direct-bookings/{bookingId}/cancel": { idempotent: true, bodyRequired: false },
   "GET /sandbox/bookings": { idempotent: false, bodyRequired: false },
   "POST /sandbox/bookings": { idempotent: true, bodyRequired: true },
-  "POST /sandbox/bookings/{bookingId}/cancel": { idempotent: false, bodyRequired: false },
-  "POST /sandbox/bookings/{bookingId}/modify": { idempotent: false, bodyRequired: true },
+  "POST /sandbox/bookings/{bookingId}/cancel": { idempotent: true, bodyRequired: false },
+  "POST /sandbox/bookings/{bookingId}/modify": { idempotent: true, bodyRequired: true },
   "GET /batches/{batchId}": { idempotent: false, bodyRequired: false },
+  "GET /connect-links": { idempotent: false, bodyRequired: false },
+  "POST /connect-links": { idempotent: true, bodyRequired: true },
+  "GET /connect-links/{linkId}": { idempotent: false, bodyRequired: false },
+  "POST /connect-links/{linkId}/revoke": { idempotent: true, bodyRequired: false },
+  "GET /readiness": { idempotent: false, bodyRequired: false },
+  "POST /go-live": { idempotent: true, bodyRequired: false },
+  "GET /properties/{propertyId}/keys": { idempotent: false, bodyRequired: false },
+  "POST /properties/{propertyId}/keys": { idempotent: true, bodyRequired: true },
+  "POST /properties/{propertyId}/keys/{keyId}/rotate": { idempotent: true, bodyRequired: false },
+  "POST /properties/{propertyId}/keys/{keyId}/revoke": { idempotent: true, bodyRequired: true },
 };

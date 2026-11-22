@@ -32,7 +32,7 @@ export interface Grid {
 /** What a person changed on the screen: single nights, only the ones that changed. */
 export interface GridEdits {
   availability?: Array<{ roomTypeId: number; date: string; available: number }>;
-  /** `rate` in MAJOR units. To close a night send `stopSell`, never a zero price. */
+  /** `rate` in MAJOR units. `stopSell` closes one rate plan on a night; 0 rooms in `availability` closes the room type. Never a zero price. */
   rates?: Array<{ ratePlanId: number; date: string; rate: number }>;
   restrictions?: Array<{ ratePlanId: number; date: string } & { [K in keyof Restrictions]?: NonNullable<Restrictions[K]> }>;
 }
@@ -134,6 +134,13 @@ function stable(value: unknown): string {
 }
 
 const nights = (range: { dateFrom: string; dateTo: string }) => Math.max(1, Math.round((ms(range.dateTo) - ms(range.dateFrom)) / DAY) + 1);
+
+/** How many cells (one row on one night) a list of updates names: what the API's cells budget counts. */
+export function cellsOf(updates: ReadonlyArray<{ dateFrom: string; dateTo: string }>): number {
+  let cells = 0;
+  for (const update of updates) cells += nights(update);
+  return cells;
+}
 
 /**
  * Split updates so one request stays inside what the API takes: at most 1,000 updates and 5,000 cells

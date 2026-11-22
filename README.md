@@ -82,26 +82,70 @@ calls ZimmerStack.
 | Save what a person changed in it | `zs.grid.save(edits)` |
 | Set the rooms left to sell | `zs.availability.set(updates)` |
 | Set prices | `zs.rates.set(updates)` |
-| Close a night, or ask for a minimum stay | `zs.restrictions.set(updates)` |
+| Stop selling one rate plan on a night, or ask for a minimum stay | `zs.restrictions.set(updates)` |
+| Close a room type on some nights, everywhere, and keep it closed | `zs.availability.close({ roomTypeId, dateFrom, dateTo })` · `zs.availability.reopen(body)` |
+| See what a change would do before I send it | `zs.rates.dryRun(updates)` · `zs.availability.dryRun(updates)` · `zs.restrictions.dryRun(updates)` |
+| Read what a change did not do | `noticesOf(accepted)` |
+| Find out why a night is not selling as I sent it | `zs.explain.night({ roomTypeId, date })` |
 | List a hotel's room types and rate plans | `zs.roomTypes.list()` · `zs.ratePlans.list()` |
 | Create or change a room type or a rate plan | `zs.roomTypes.save(roomType)` · `zs.ratePlans.save(ratePlan)` |
 | Delete a room type or a rate plan | `zs.roomTypes.delete(idOrRef)` · `zs.ratePlans.delete(idOrRef)` |
 | Charge a different price on one booking site | `zs.channels.setModifier(channelId, steps)` |
 | Read the bookings the booking sites sent | `zs.channelBookings.list()`, or a webhook |
+| Read every booking and channel event, in order, from where I stopped | `zs.events.all({ after })` |
 | Read the bookings made on the hotel's own website | `zs.directBookings.list()` |
 | Pretend a booking came in (practice hotel only) | `zs.sandbox.bookings.create(booking)` |
+| Pretend a no-show, or a channel problem (practice hotel only) | `zs.sandbox.bookings.noShow(bookingId)` · `zs.sandbox.syncEvents.create(body)` |
+| Make the practice hotel's booking site refuse a price, or go down | `zs.sandbox.faults.set(body)` · `zs.sandbox.faults.clear()` |
+| Create and manage my webhook addresses from code | `zs.webhookEndpoints.create(body)` and the rest |
+| See how much of each limit is left | `zs.limits.get()` |
+| See which of my calls were refused, and from which address they came | `zs.requests.list({ status: "errors" })` |
+| Find out what is wrong | `npx @zimmerstack/connect doctor` |
 | Check that a change reached the booking sites | `zs.batches.wait(batchId)` · `zs.sync.get()` |
 | Create a booking from your own booking engine | `zs.bookings.create(booking)` |
 | Work with many hotels on one key | `zs.forProperty(propertyId)` |
 | Add a hotel | `zs.properties.create(hotel)` |
 | Remove a hotel I added | `zs.properties.delete(propertyId, { confirm })` |
+| Let a hotel connect a booking site itself | `zs.connectLinks.create({ propertyId, channel })` |
+| Check that a hotel is ready, and make my software its source of truth | `zs.readiness.get()` · `zs.readiness.goLive()` |
+| Make, replace and revoke the keys I made on a hotel | `zs.hotelKeys.create(propertyId, body)` · `zs.hotelKeys.rotate(propertyId, keyId)` · `zs.hotelKeys.revoke(propertyId, keyId, { reason })` |
+| Read my bills and how many hotels I may still add | `zs.billing.get()` · `zs.billing.invoices()` · `zs.billing.nextInvoice()` |
+| Open a support ticket and read the answer | `zs.supportTickets.create(body)` · `zs.supportTickets.get(ticketId)` |
+| See whether something is wrong on ZimmerStack's side | `zs.status.get()` |
 
 Every call and every answer is typed, with the meaning of each field shown in your editor.
 
-**Money.** You send a price as a normal number: `4500` means 4,500.00 in the hotel's own currency. When
-you read prices one by one with `zs.rates.get()`, they come back in the smallest unit (`rateMinor`:
-`450000` is 4,500.00). The calendar helpers `zs.grid.load()` and `zs.grid.save()` always use normal
-numbers.
+**Money.** A price goes up and comes back in the same shape: the hotel's own currency, with that
+currency's own decimals. You send a normal number or a decimal string (`4500.50` or `"4500.50"`) and it
+is kept exactly; `zs.rates.get()` returns `rate: "4500.50"` beside `currency` and `decimals`. The
+calendar helpers `zs.grid.load()` and `zs.grid.save()` always use normal numbers.
+
+| Currency | Decimals (ISO 4217) | You send | You read `rate` | `rateMinor` |
+|---|---|---|---|---|
+| Rupee, euro, dollar, dirham, rupiah | 2 | `4500.50` | `"4500.50"` | `450050` |
+| Yen, won, dong | 0 | `15000` | `"15000"` | `1500000` |
+| Kuwaiti, Bahraini, Omani, Jordanian, Tunisian, Libyan dinar | 3 | `45.75` | `"46.000"` | `4600` |
+
+`rateMinor` is still returned, and is always hundredths of the currency's unit: that is paise or cents
+where a currency has two decimals, and it is not yen (`1500000` is 15,000 yen). Read `rate` and you never
+divide. A price with more decimals than the currency has, a number or a decimal string alike, is
+rounded and named in the answer's `rounded` list, so nothing changes without the answer saying so. A
+three-decimal currency is kept as a whole amount for now.
+
+The package has helpers for money, so you never do the arithmetic on floats (from 0.9.0). They take and
+return the same decimal strings, and `decimals` comes from the API's own answer:
+
+```ts
+import { addAmounts, amountFromHundredths, amountFromMinorUnits, formatAmount, multiplyAmount, toAmount } from "@zimmerstack/connect";
+
+const { currency, decimals } = await zs.property.get();  // "INR", 2 · "JPY", 0
+toAmount(4500.5, decimals);                              // "4500.50": the shape the API reads and writes
+multiplyAmount("4500.50", 3, decimals);                  // "13501.50": three nights, exact
+addAmounts("0.10", "0.20", decimals);                    // "0.30", not 0.30000000000000004
+amountFromMinorUnits(450050, decimals);                  // "4500.50": from a ledger that stores whole paise or cents
+amountFromHundredths(1500000, 0);                        // "15000": from a rateMinor, in any currency
+formatAmount("4500.50", { currency, decimals, locale: "en-IN" }); // "₹4,500.50", for a person to read
+```
 
 **Dates.** A date is a plain calendar day, `YYYY-MM-DD`, on the hotel's own clock.
 
@@ -116,18 +160,99 @@ const accepted = await zs.grid.save({
     { ratePlanId: 901, date: "2026-12-24", rate: 5200 },
     { ratePlanId: 901, date: "2026-12-25", rate: 5200 },
   ],
-  restrictions: [{ ratePlanId: 901, date: "2026-12-31", stopSell: true }], // close a night. Never send a price of zero.
+  restrictions: [{ ratePlanId: 901, date: "2026-12-31", stopSell: true }], // stop selling this rate plan that night. Never send a price of zero.
 });
 
 // Accepted means ZimmerStack has saved it and is sending it to the booking sites.
-const batch = await zs.batches.wait(accepted[0]!.batchId); // "landed", or still "pending" after five minutes
+const batch = await zs.batches.wait(accepted[0]!.batchId); // "landed", "failed", or still "pending" after five minutes
 ```
+
+`stopSell` closes one rate plan on that night. The room type's other rate plans keep selling. To stop
+selling a room type on a night on every booking site, send its room count as 0 with
+`zs.availability.set()` or `grid.save({ availability })`.
+
+**Sent is not held: read the answer.** "Accepted" means saved by ZimmerStack, not yet on the booking
+sites. Three things can still happen, and each one is told to you:
+
+- A booking site's side refuses a value. The batch then reads `failed` with `parkedCells` and
+  `lastError`: the value is held and not sent again. Send a corrected value for those nights.
+- A write names a room type or rate plan that reaches no booking site. The batch lists it under
+  `unreachable`.
+- A price is kept differently from how you sent it. The write's answer lists it under `rounded`.
+
+And later, someone can change a price on a booking site's side. A check that runs every night finds it,
+sends your value again and tells you: see [Receive bookings](#receive-bookings) for `channel.drift.detected`.
 
 Room counts usually reach the booking sites in seconds. A full calendar of prices can take minutes.
 Inside a short-lived function (Vercel, Netlify), show the `batchId` and read `zs.sync.get()` later
 instead of waiting.
 
 Guide: <https://docs.zimmerstack.com/rate-grid>
+
+## See what a change will do, and read what it did not do
+
+"Accepted" means ZimmerStack saved your change. It does not say the change does what you meant. Three
+things do (from 0.9.0).
+
+**1. Ask first: a dry run.** The same updates, checked exactly as the real change, and nothing is saved.
+
+```ts
+const [preview] = await zs.restrictions.dryRun([{ ratePlanId: 901, dateFrom: "2026-12-31", dateTo: "2026-12-31", stopSell: true }]);
+preview.verdict; // "would-write", "nothing-to-write", or "would-refuse" with the refusal you would get
+```
+
+A dry run answers a `WritePreview`, and `set` answers a `WriteAccepted`: two types, so your code cannot
+mistake one for the other. A dry run counts against the per-minute limits like the change it previews,
+so it is not a way to read the calendar.
+
+**2. Read the notices.** Every answer of `set`, and every dry run, can carry notices: one plain sentence
+each, about what the change did **not** do, with what to do about it.
+
+```ts
+import { findNotice, noticesOf } from "@zimmerstack/connect";
+
+const accepted = await zs.restrictions.set([{ ratePlanId: 901, dateFrom: "2026-12-31", dateTo: "2026-12-31", stopSell: true }]);
+for (const notice of noticesOf(accepted)) show(notice.level, notice.message, notice.action); // warnings first
+findNotice(accepted, "ROOM_STILL_ON_SALE"); // the room still sells through its other rate plans
+```
+
+The two that explain most surprises:
+
+- **Stop-sell is a switch on one rate plan.** The room keeps selling through its other rate plans, and
+  through a rate a booking site makes on its own side (`ROOM_STILL_ON_SALE`).
+- **A room count of 0 is a count, not a switch.** It closes the room everywhere, but a cancellation at a
+  booking site puts a room back, and your next count replaces it (`COUNT_ZERO_IS_NOT_STOP_SELL`).
+
+A notice is never an error: the change was saved. Decide on `notice.code` (`NOTICES` lists every code),
+and show `message` and `action` to the person who saved.
+
+**3. Close a room type everywhere, in one call.** Its count goes to 0 **and** stop-sell is switched on
+for every one of its rate plans, so it is closed and stays closed.
+
+```ts
+const closed = await zs.availability.close({ roomTypeId: 412, dateFrom: "2026-12-30", dateTo: "2027-01-02" });
+closed.notReached; // read this: what the close could not reach, and why
+await zs.availability.reopen({ roomTypeId: 412, dateFrom: "2026-12-30", dateTo: "2027-01-02", available: 3 });
+```
+
+`reopen` undoes exactly what `close` did. Pass `available` when your software knows how many rooms are
+free now; without it each night gets back the count it held before. `closeDryRun` and `reopenDryRun`
+show what each would do.
+
+**Why is this night not selling as I sent it?** One read tells the night's whole story:
+
+```ts
+const night = await zs.explain.night({ roomTypeId: 412, date: "2026-12-31" });
+night.summary; // plain sentences, most important first: show them to the person who asked
+```
+
+It answers what your software last sent, what ZimmerStack holds and who set it, and what the channel
+manager was last seen holding, with any value it refused in its own words. It cannot see a booking
+site's own screen: it reads the channel manager's copy, as last seen. "What your software last sent" is
+there for changes made after this feature shipped.
+
+Guides: <https://docs.zimmerstack.com/dry-run> · <https://docs.zimmerstack.com/notices> ·
+<https://docs.zimmerstack.com/close-and-reopen> · <https://docs.zimmerstack.com/explain>
 
 ## Set up a hotel's rooms: create, change, delete
 
@@ -190,9 +315,61 @@ real, signed message:
 await zs.sandbox.bookings.create({ roomTypeId: 412, checkIn: "2026-12-05", nights: 2, rooms: 1, adults: 2, guestName: "Asha Verma", otaName: "Booking.com", paidByOta: false });
 ```
 
-No database yet? Read the bookings back any time with `zs.channelBookings.list()`. To catch up after
-your server was down, `zs.channelBookings.all({ since })` gives every booking changed since a time you
-choose.
+**The webhook is the nudge. The event log is the truth** (from 0.9.0). A webhook can arrive twice, late,
+out of order, or not at all when your server is down for a day. So every event of a hotel also has a
+place in one ordered list: its `sequence`, one higher than the hotel's last event. Save the last
+sequence you applied, and read from there:
+
+```ts
+// Run this when a webhook arrives, on a schedule, and when your server starts.
+for await (const event of zs.events.all({ after: await loadPlace(hotelId) })) {
+  await apply(event);                         // the same shape the webhook carries
+  await savePlace(hotelId, event.sequence);   // your new place
+}
+```
+
+Built this way, nothing depends on a webhook having arrived. Events stay in the log for 90 days. If you
+were away for longer, pass `onGap` to hear of it, then read each booking's latest state with
+`zs.channelBookings.all({ since })` and `zs.directBookings.all({ since })`. A booking also carries a
+`version` (1, 2, 3 and so on): a higher version is a later state, whatever order things arrived in.
+
+Besides bookings, your address can receive five more kinds of message, each only when it lists the
+type. Narrow them with `isSyncEvent`, `isDriftEvent`, `isConnectEvent`, `isIncidentEvent` and
+`isSupportTicketEvent`:
+
+- `channel.sync.alert` and `channel.sync.recovered`: a problem with a booking site began (a refused
+  value, a disconnect, prices or room counts that stopped going out) and ended.
+- `channel.drift.detected` and `channel.drift.healed`: the nightly check found a booking site's side
+  holding something other than what you sent, sent your value again, and later found them agreeing.
+- `channel.connect.completed` and `channel.connect.expired`: a connect link you made ended. The hotel
+  started selling on the booking site, or the link ran out first.
+- `platform.incident.opened`, `.updated` and `.resolved`: ZimmerStack recorded a problem on its own
+  side that touches your hotels, and later ended it.
+- `support.ticket.replied` and `support.ticket.closed`: ZimmerStack answered your support ticket.
+
+The last two kinds are about your account, not one hotel. They have **no `event.property`** and no
+`sequence`, and they are not in the event log. Check `isIncidentEvent` and `isSupportTicketEvent` before
+any code that reads `event.property`.
+
+**A guest's phone and email.** A webhook carries them only while your address has guest contact
+switched on. A read by API returns them until 30 days after checkout; after that they are `null` and
+`guest.contactWithheld` says `"retention"`. Every read that returned contact is logged, and the hotel's
+owner can see the list. Copy what you need when the booking arrives.
+
+**Your webhook addresses, from code** (from 0.9.0). A company key with the permission `webhooks:manage`
+(tick **Also manage webhooks** when you make the key) creates and looks after them without the portal:
+
+```ts
+const { endpoint, secret } = await zs.webhookEndpoints.create({ url: "https://pms.example/zimmerstack", dataAck: true });
+// `secret` is shown this once. Store it in your server's settings now.
+await zs.webhookEndpoints.test(endpoint.id, { eventType: "channel.booking.created" }); // a signed sample
+await zs.webhookEndpoints.pause(endpoint.id);   // before planned downtime: events are held
+await zs.webhookEndpoints.resume(endpoint.id);  // they go out, oldest first
+```
+
+Also there: `update` (the address, the event types, the guest-contact switch), `rotateSecret`,
+`recover(id, since)`, `delete`, and `deliveries.list`, `deliveries.get` and `deliveries.redeliver` for the
+delivery log.
 
 Hotels outside India (from 0.7.0): a booking carries `taxes`, the hotel's own tax lines, wherever the
 hotel has confirmed them. When a booking site sends a booking in another currency than the hotel's,
@@ -249,6 +426,8 @@ await hotel.grid.load("2026-12-01", "2026-12-14");
 - A **live** key never guesses. Always name the hotel.
 - An app that serves one hotel can name it once: `ZIMMERSTACK_PROPERTY_ID=61` on the server, or
   `new ZimmerStack({ propertyId: 61 })`.
+- Each hotel has its own queue (from 0.8.0). One hotel that is close to its limit waits by itself; the
+  others keep going. What all your hotels share, your company's limit, is kept for all of them together.
 
 ## Add a hotel, remove a hotel
 
@@ -293,6 +472,91 @@ error), you can safely call `delete` again: a hotel that is already gone answers
 one that is still being removed answers `PROPERTY_BUSY` (wait, then ask again).
 
 Guide: <https://docs.zimmerstack.com/hotels>
+
+## Connect a booking site, go live, and a hotel's keys
+
+A software company's **company key** can do three more things without the partner portal (from 0.9.0).
+Each needs its own permission, ticked when the key is made.
+
+**A connect link.** The hotel's own person connects a booking site. Your software never holds the
+booking site's password, and no call takes one.
+
+```ts
+import { shownOnce } from "@zimmerstack/connect";
+
+const made = await zs.connectLinks.create({ propertyId: 61, channel: "bookingcom" });
+await sendToTheHotel(shownOnce(made), made.hotelStep); // the link, and what the hotel does at the booking site first
+```
+
+The hotel opens the link on ZimmerStack's page, signs in to the booking site, confirms each room and
+rate match, and presses Start selling. You then receive `channel.connect.completed`. A link is made
+with a **live** key only: a practice hotel has no booking site to connect. Permission:
+`channels:connect`.
+
+**Readiness and go-live.** A hotel you add is yours from the first day. A hotel that let you in with
+your vendor code is not, until it goes live.
+
+```ts
+const hotel = zs.forProperty(61);
+const report = await hotel.readiness.get();              // four checks, each with what to do
+await hotel.rates.set(aYearOfPrices, { beforeGoLive: true });   // stored, and waits for go-live
+if ((await hotel.readiness.get()).ready) await hotel.readiness.goLive();
+await hotel.availability.set(aYearOfCounts);             // right after going live: your room counts
+```
+
+`beforeGoLive: true` says you know the hotel is not live yet. **Prices and stay rules sent this way are
+stored and wait.** The readiness report asks for a price for every rate plan and night of the year
+ahead.
+
+**Room counts are different.** Until the hotel is live, a room count may only **lower** what is on sale.
+A lower count goes to the booking sites at once, because a count that waited could sell a room twice. A
+count that **raises** what is on sale is refused (it comes back in the answer's `rejected` list),
+because the hotel's own people may still be running its counts. So send your room counts again right
+after going live.
+
+**A hotel's keys.** Make, replace and revoke the keys you made on a hotel you added. Permission:
+`keys:manage`.
+
+```ts
+import { shownOnce, withoutShownOnce } from "@zimmerstack/connect";
+
+const minted = await zs.hotelKeys.create(61, { name: "Night audit job", scopes: ["ari:read"] });
+await secrets.put("zimmerstack/hotel-61", shownOnce(minted)); // the key is in this answer only
+console.log(withoutShownOnce(minted));                        // safe to log: the key is not in it
+```
+
+**Shown once.** A key, a connect link and a webhook secret are each in one answer and nowhere else.
+`shownOnce(answer)` returns the value. If the answer is a repeat of an earlier request, the value is not
+in it: `shownOnce` then throws an error that names the call that gets you a new one. It never hands you
+an empty value to store by mistake.
+
+Guides: <https://docs.zimmerstack.com/connect-links> · <https://docs.zimmerstack.com/go-live> ·
+<https://docs.zimmerstack.com/authentication#hotel-keys>
+
+## Your bills, support and status
+
+Also for a company key, each with its own permission (from 0.9.0):
+
+```ts
+const bill = await zs.billing.get();          // what is owed, your hotel quota, money paid ahead (billing:read)
+const next = await zs.billing.nextInvoice();  // what the next invoice is made of, hotel by hotel
+
+const ticket = await zs.supportTickets.create({ severity: "many_hotels", subject: "Prices are not going out", message: "Since 08:10 UTC …", propertyIds: [61, 62] }); // support:write
+
+const { incidents } = await zs.status.get();  // is something wrong on ZimmerStack's side? Any key.
+```
+
+- Billing is **read only**: nothing pays or changes anything. `atCost` lists what the channel manager
+  charged above the room types and rate plans a hotel includes, passed on at cost. A line marked
+  `RECORDED` is not on an invoice yet.
+- A ticket has three levels. `many_hotels` (two or more hotels cannot sell or take bookings) gets a first
+  reply within the hour, 9:00 to 21:00 India time, every day; the other two within one working day.
+  ZimmerStack attaches what its own records show, so never paste a key or a guest's details.
+- `zs.status.get()` lists the incidents that touch your hotels. During one, keep what your people
+  changed and send it when it ends.
+
+Guides: <https://docs.zimmerstack.com/billing> · <https://docs.zimmerstack.com/support> ·
+<https://docs.zimmerstack.com/status>
 
 ## Bookings from the hotel's own website
 
@@ -350,8 +614,9 @@ answers `replay: true` and moves no money. Your own cancel comes back to you as
 own cancel button, never from a background job.
 
 To try it with a test key, call `zs.sandbox.bookings.create({ …, otaName: "Website" })` and then cancel
-that booking. The nights come back and no money moves. A test key cannot pretend a no-show: press Test on
-your address and choose `direct.booking.modified` to receive its sample.
+that booking. The nights come back and no money moves. To try a no-show, call
+`zs.sandbox.bookings.noShow(bookingId)` on that booking: your address receives the real
+`direct.booking.modified`, and `{ undo: true }` takes it back.
 
 Guide: <https://docs.zimmerstack.com/website-bookings>
 
@@ -367,6 +632,8 @@ try {
   err.code;              // never changes: "RATE_OUT_OF_BAND", "SCOPE_MISSING", "RATE_LIMITED". Decide on this.
   err.message;           // a sentence for the person at the screen. Show it.
   err.retryAfterSeconds; // set when you hit a limit: how long to wait
+  err.freesAt;           // the same as a moment (a Date): when to send it again
+  err.scope;             // which limit said no: "writes", "cells-hour", "rate-resends-day"
   err.retryable;         // false means the request itself is wrong. Fix it. Do not send it again.
 }
 ```
@@ -374,22 +641,169 @@ try {
 The package has already waited and tried again where that could help. Do not put its calls in a retry
 loop of your own.
 
+A limit that frees within two minutes is waited out for you. A longer one (a limit per hour or per day)
+comes straight back as a `RATE_LIMITED` error that says when it frees, so a person is not left waiting.
+A job that may wait can say so, and the package holds the call and tells you when it lands:
+
+```ts
+const zs = new ZimmerStack({ onEvent: (e) => e.type === "wait" && console.log(e.message) });
+await zs.rates.set(updates, { maxWaitSeconds: 3600 }); // "PUT /rates lands in about 25 minutes (waiting for the cells-hour budget)."
+```
+
 Every code, what it means and what to do: <https://docs.zimmerstack.com/errors>
+
+## When something is wrong: the doctor
+
+One command looks at your whole integration and says what to fix (from 0.9.0):
+
+```bash
+npx @zimmerstack/connect doctor
+```
+
+It reads the key from `ZIMMERSTACK_CONNECT_KEY` (the environment, or your project's `.env.local` or
+`.env`), and checks, in order:
+
+| It checks | What it tells you |
+|---|---|
+| The key | Whether it is the right shape, before anything is sent. A key that was mistyped or cut short is caught by its own checksum. Then whether it answers: revoked, expired, or called from an address that is not on its list. |
+| Is it ZimmerStack | The open incidents on ZimmerStack's side that touch your hotels, with what was last said. |
+| Hotels and permissions | Which hotels the key reaches, and what it may do on each. For a hotel that is not live yet, which readiness checks have not passed and what to do. |
+| Limits | Every limit and how full it is, and whether the integration is paused. |
+| Refused calls | The last day's refused calls, grouped by reason, with what to do about each and the last request id. |
+| Webhook addresses | Whether each one is being answered, and its last failures. If your server answers 401, it says to check how you verify the signature. |
+| Sync and drift | Whether what you sent reached the booking sites, which values were refused, and what the nightly check found changed on a booking site's side. |
+
+It only reads, with a test key or a live key, and it never prints the key. It exits with 0 when nothing
+needs attention and 1 when something does, so you can run it after a deploy. `--property <id>` looks at
+one hotel of a company key; `--json` prints the report for a script. The same checks from your own
+code: `diagnose()` and `formatDoctorReport(report)`.
+
+Name a night and it explains that night too:
+
+```bash
+npx @zimmerstack/connect doctor --room-type 412 --night 2026-12-31
+```
+
+## Keys
+
+- A key made since 22 Nov 2026 is `zsk_live_` (or `zsk_test_`), 40 letters and digits, then 6
+  characters that are a checksum of the rest. `checkKey(value)` tells a real key from a mistyped one
+  without sending it anywhere; use it where a person pastes a key. A key made before that day keeps
+  working until it is rotated.
+- **Rotate** a key in the screen where it was made (the partner portal, or the hotel owner's Developers
+  screen). The new key is shown once and the old one keeps working for 24 hours, so you can swap with
+  no downtime. Company keys can be rotated too. A person does this for a hotel's own key and for a
+  company key. The keys a software company made on a hotel can also be made, rotated and revoked by
+  API (`zs.hotelKeys`, above).
+- **A key found in a public place** (a public repository, for example) is revoked at once and its holder
+  is emailed. Calls then answer `API_KEY_REVOKED`: make a new key and keep it in your server's settings,
+  never in code.
+- **What a key did** is kept for 7 days: `zs.requests.list()` gives the time, the route, the status, the
+  error code, the address and the request id of each call, never a body. An address you do not
+  recognise is the first sign of a leaked key.
+
+Guide: <https://docs.zimmerstack.com/authentication>
 
 ## What the package does for you
 
 | The rule | What the package does |
 |---|---|
 | The key stays on a server | Refuses to start in a browser or a mobile app. Sends the key to ZimmerStack only. Never prints it. |
-| You may make only so many calls a minute | Watches the limit and slows down before it is reached. |
-| Changes go out in order | Sends one change at a time, in the order you made them. Reads go up to four at once. |
-| Try again only when that can help | Tries again after a "slow down" answer, a fault on our side or a network failure. Any other "no" comes straight back to you. |
+| You may make only so many calls a minute | Reads every limit from every answer (the key's, the hotel's, your company's) and slows down before one is reached. |
+| Changes go out in order | Sends one hotel's changes one at a time, in the order you made them. Each hotel has its own queue, so one hotel never holds up another. At most four calls at once. |
+| Try again only when that can help | Tries again after a "slow down" answer, always. Tries again after a fault on our side or a network failure only when sending twice cannot apply the change twice: a read, or a change that carries its own id (next row). Any other "no" comes straight back to you. |
+| A limit per hour or per day | Waits when the wait is under two minutes. Otherwise gives you the "no" at once with when it frees, and stops sending calls that would only be refused again. |
 | A retry must not save twice | Gives each change its own id and reuses it when it tries again, so the same change is never saved twice. A call that cannot be safely repeated, such as a delete, is not sent again when its result is unknown. |
 | A request has a size limit | Splits a save at 1,000 updates or 5,000 night cells. |
 | A refused key is not tried again | After a key is refused, it stops calling. |
 | A test must not touch a real hotel | Refuses to change anything with a `zsk_live_` key while your tests run. |
 
 Limits in full: <https://docs.zimmerstack.com/limits>
+
+## Limits
+
+Every limit the API holds you to, from the one table the server enforces. You do not need to learn it:
+the package reads the limits from every answer and keeps inside them. It is here so you can size a job.
+`zs.limits.get()` (from 0.8.0) answers the same rows for your key, with what is left of each and when it
+refills:
+
+```ts
+const { budgets, shield } = await zs.limits.get();
+const today = shield?.budgets.find((b) => b.scope === "cells-day");
+console.log(today?.remaining, "changed cells left today; room again in", today?.resetSeconds, "s");
+```
+
+A write is every call that is not a read. An IPv6 /56 counts as one address. A key that has just worked
+from your address is counted against its own limits, not the address's, so many hotels behind one
+office address are not held to the address's limit.
+
+<!-- limits-table:begin (generated from connectApiLimitsTable.ts; run `pnpm --dir apps/backend exec tsx ts/scripts/connect-api-limits-doc.ts`) -->
+**Budgets the key guard and the routes measure (429 `RATE_LIMITED`).**
+
+| `data.scope` | In `RateLimit` as | Per | Window | Quota | Counts |
+|---|---|---|---|---|---|
+| `api-address` | `api-address` | address, on each API machine | 60 s fixed | 1,200 | every request to any ZimmerStack API route from one address (an IPv6 /56 counts as one address), counted on each API machine: the guard in front of everything, the Connect API included |
+| `ip` | `ip` | address | 60 s sliding | 240 | requests from one address (an IPv6 /56 counts as one address) that carry no key verified from it in the last ten minutes, checked before the key is read. A key that has authenticated from that address is counted against its own budgets, not here |
+| `ip-auth` | `ip-auth` | address | 60 s sliding | 20 | 401 answers, and 403 IP_NOT_ALLOWED, to one address; past it the address's unverified requests are refused before any lookup. A key that authenticated from that address in the last ten minutes keeps working |
+| `key-auth` | `key-auth` | address and key | 60 s sliding | 5 | 401 and 403 IP_NOT_ALLOWED answers to one key (its first twelve characters) from one address; past it that key is refused from that address before any lookup, so one revoked key never uses up its address's budget |
+| `global-unauthenticated` | `global-unauthenticated` | everyone without a verified key | 60 s sliding | 1,200 | requests from every address together that carry no recently verified key and so cost a key lookup: the most a flood of made-up keys can ask of the database |
+| `requests` | `key` | key | 60 s sliding | 120 | every request on one key |
+| `writes` | `key-writes` | key | 60 s sliding | 30 | every request on one key that is not a GET (PUT, POST and DELETE); a dry run (dryRun: true) is a write here |
+| `property` | `property` | property (all its keys) | 60 s sliding | 300 | every request on all of a property's keys together (five keys are not five budgets) |
+| `property-writes` | `property-writes` | property (all its keys) | 60 s sliding | 60 | every request that is not a GET on all of a property's keys together |
+| `cells` | `cells` | property (all its keys) | 60 s sliding | 20,000 | cells a property's writes name after range expansion, charged before anything is read or written. A dry run is charged the same cells as the write it previews; a close or a reopen (POST /availability/close) is charged the room type's count and each of its rate plans for every night |
+| `company` | `company` | company key (all its hotels) | 60 s sliding | 1,200 | every request on one company key, across all its hotels (each hotel keeps its own key and property budgets too) |
+| `global` | `global` | everyone | 60 s sliding | 3,000 | every authenticated request on the Connect API, all keys together; test keys count in a ceiling of their own of the same size, so a sandbox never spends what live hotels use |
+| `bookings` | `bookings` | key | 60 s sliding | 20 | POST /bookings on one key |
+| `property-bookings` | `property-bookings` | property (all its keys) | 60 s sliding | 40 | POST /bookings on all of a property's keys together |
+| `property-bookings-day` | — | property (all its keys) | rolling 24 hours | 500 | POST /bookings per property per ROLLING 24 HOURS (not per minute); the owner can raise it per property |
+| `direct-cancels` | `direct-cancels` | key | 60 s sliding | 10 | POST /direct-bookings/{bookingId}/cancel on one key (a replay is not counted) |
+| `property-direct-cancels-day` | — | property (all its keys) | rolling 24 hours | 50 | POST /direct-bookings/{bookingId}/cancel per property per ROLLING 24 HOURS (not per minute) |
+
+**Budgets over an hour and a day (429 `RATE_LIMITED`). "At least" is the least any property gets; `GET /limits` answers your own.**
+
+| `data.scope` | In `RateLimit` as | Per | Window | Quota | Counts |
+|---|---|---|---|---|---|
+| `cells-hour` | — | property (all its keys) | one clock hour (UTC) | at least 10,000 | changed cells, all of a property's keys together. At least this many; a larger property gets two of its own full calendars an hour. A dry run changes nothing and is never counted here |
+| `cells-day` | — | property (all its keys) | rolling 24 hours | at least 30,000 | changed cells, all of a property's keys together. At least this many; a larger property gets six of its own full calendars a day. A dry run changes nothing and is never counted here |
+| `vendor-cells-day` | — | software vendor (all its hotels) | rolling 24 hours | at least 150,000 | a software vendor's changed cells across all its hotels (company keys and keys it minted). At least this many, plus 15,000 for each hotel it serves; a sandbox is never counted here |
+| `shield-lane` | — | property (all its keys) | one clock hour (UTC) | at least 500 | cells of writes that only close inventory, accepted while the property is out of budget or paused (the safety lane). At least this many; sixty nights of every room type |
+| `structure-creates` | — | property | 60 s sliding | 20 | new room types and rate plans per property; a row already here that the write puts on the channel manager counts when it gets there, never when the answer's notice says it could not; also the most one request may create (TOO_MANY_NEW_ENTITIES) |
+| `structure-creates-day` | — | property | rolling 24 hours | 300 | new room types and rate plans per property |
+| `structure-edits-day` | — | property | rolling 24 hours | 300 | changed room types and rate plans per property |
+| `structure-deletes-day` | — | property | rolling 24 hours | 60 | deleted room types and rate plans per property |
+| `vendor-structure-creates-day` | — | software vendor (all its hotels) | rolling 24 hours | at least 500 | a software vendor's new room types and rate plans across all its hotels |
+| `vendor-remote-properties-day` | — | software vendor | rolling 24 hours | 10 | hotels a software vendor puts on the channel manager for the first time |
+| `vendor-property-removals-day` | — | software vendor | rolling 24 hours | 10 | hotels a software partner removes (DELETE /properties/{propertyId}, and Remove hotel in the partner portal); a sandbox is never counted |
+| `partner-new-properties-hour` | — | software partner | one hour | 20 | hotels a partner adds, POST /properties and the partner portal's form together; a sandbox is never counted |
+| `partner-new-sandboxes-hour` | — | software partner | rolling hour | 30 | sandboxes a partner makes with a test key (POST /properties), counted when one is made; the partner portal's own sandbox button is not counted |
+| `connect-links-hour` | — | property | rolling hour | 10 | one-time connect links a software partner makes for one hotel (POST /connect-links), every booking site together; a link that was withdrawn or ran out still counts |
+| `partner-connect-links-hour` | — | software partner | rolling hour | 120 | one-time connect links a software partner makes across all its hotels (POST /connect-links) |
+| `modifier-changes-day` | — | property | rolling 24 hours | 6 | changes to a channel's price modifier per property (PUT /channels/{channelId}/modifier); steps the channel already holds are not counted |
+| `rate-resends-day` | — | property | rolling 24 hours | 3 | times a property's prices are sent to the channels again (POST /rates/resend) |
+| `partner-support-tickets-day` | — | software partner | rolling 24 hours | 20 | support tickets a partner opens (POST /support-tickets), both key modes together; a replayed idempotency key is not counted |
+| `partner-support-messages-hour` | — | software partner | rolling hour | 60 | messages a partner adds to its support tickets (POST /support-tickets/{ticketId}/messages) |
+
+**Caps: the most one request may carry, and the most of a thing that may exist (a 4xx of their own, never a 429).**
+
+| `data.scope` | In `RateLimit` as | Per | Window | Quota | Counts |
+|---|---|---|---|---|---|
+| `maxUpdatesPerRequest` | — | request | one request | 1,000 | entries in one updates array (400 TOO_MANY_UPDATES past it) |
+| `maxCellsPerRequest` | — | request | one request | 5,000 | cells (entity × night) one request may name after range expansion (400 TOO_MANY_CELLS past it) |
+| `maxBodyBytes` | — | request | one request | 1,048,576 | the JSON body; larger is 413 PAYLOAD_TOO_LARGE before a byte is validated |
+| `horizonDays` | — | request | one request | 500 | the last writable night and the last bookable arrival: today + this many, in the property's calendar (400 HORIZON past it) |
+| `maxNightsPerBooking` | — | request | one request | 90 | nights in one POST /bookings |
+| `newEntitiesPerRequest` | — | request | one request | 20 | new room types or rate plans one structure write may create (400 TOO_MANY_NEW_ENTITIES past it) |
+| `maxRoomTypes` | — | property | one request | 18 | live room types on a hotel (a vacation rental has figures of its own, on GET /limits): 409 CATALOG_LIMIT_REACHED past it |
+| `maxRatePlans` | — | property | one request | 180 | live rate plans on a hotel: 409 CATALOG_LIMIT_REACHED past it |
+| `maxActiveKeysPerProperty` | — | property | one request | 5 | active hotel keys on one property (409 KEY_LIMIT past it) |
+| `maxActiveCompanyKeys` | — | software partner | one request | 5 | active company keys of one software partner |
+| `maxSandboxes` | — | software partner | one request | 5 | sandboxes one software partner may hold at once |
+| `maxAllowedCidrs` | — | key | one request | 20 | entries in one key's address allowlist |
+| `idempotencyRetentionDays` | — | key | one request | 7 | how long an x-idempotency-key replays its first answer |
+| `maxSupportMessageChars` | — | request | one request | 5,000 | characters in one support ticket message, the first included (400 VALIDATION past it) |
+| `maxSupportTicketProperties` | — | request | one request | 200 | hotels one support ticket may name in propertyIds; past it send allProperties (400 VALIDATION) |
+<!-- limits-table:end -->
 
 ## Options
 
@@ -399,8 +813,8 @@ new ZimmerStack({
   propertyId,             // a company key's hotel. Default: ZIMMERSTACK_PROPERTY_ID (or use forProperty)
   timeoutMs: 30_000,      // how long one try may take
   maxRetries: 3,          // how many more tries, for what may pass later
-  maxWaitSeconds: 120,    // the longest it waits for a limit before giving you the "no"
-  onEvent: (e) => log(e), // every answer, wait and retry, for your logs. Never carries the key.
+  maxWaitSeconds: 120,    // the longest it holds a call for a limit before giving you the "no". Any call can pass its own.
+  onEvent: (e) => log(e), // every answer, wait and retry, for your logs ("lands in about 25 minutes"). Never carries the key.
   fetch,                  // a stand-in for tests
 });
 ```
@@ -408,7 +822,11 @@ new ZimmerStack({
 ## Test your integration
 
 Use a `zsk_test_` key, or pass a fake `fetch`. Nothing you do with a test key reaches a booking site,
-and `zs.sandbox.bookings.create()` sends your webhook a real message. A software company makes test keys
+and `zs.sandbox.bookings.create()` sends your webhook a real message. A practice hotel can make a real
+message of every type: a booking arriving, changing and cancelled, a cancellation with no booking before
+it (`arrivesCancelled: true`), a website booking and its no-show, and a channel problem with its end
+(`zs.sandbox.syncEvents.create()`). It can also be made to fail: `zs.sandbox.faults.set({ kind: "refuse" })`
+makes its pretend booking site refuse the next price, so you can watch your software handle it. A software company makes test keys
 in the partner portal under Developers. A hotel's owner makes one in Admin → Developers → API keys.
 
 Guide: <https://docs.zimmerstack.com/sandbox>
@@ -442,6 +860,14 @@ up any part of the API, and try a call on your practice hotel before it writes c
 | `zimmerstack_reference` | Any call, type, limit or error code, from the API's own contract. |
 | `zimmerstack_sandbox_read` | One read on your practice hotel: real ids and real shapes. |
 | `zimmerstack_sandbox_write` | One change on your practice hotel, to try a request before writing the code that sends it. |
+| `zimmerstack_doctor` | The doctor's checks on your practice hotel's key: what is wrong, and what to do. |
+| `zimmerstack_sandbox_limits` | Every limit of the key and how full it is. |
+| `zimmerstack_sandbox_events` | The practice hotel's ordered event log, from a sequence: the exact body your webhook receives. |
+| `zimmerstack_sandbox_simulate` | One real event of any type on your practice hotel: a booking arriving, changing, cancelled, a no-show, a channel problem and its end. |
+| `zimmerstack_sandbox_dry_run` | What a change would do on your practice hotel, with nothing saved, and its notices. |
+| `zimmerstack_sandbox_explain` | One night's whole story on your practice hotel. |
+| `zimmerstack_sandbox_close` | Close a room type everywhere on your practice hotel, or reopen it. |
+| `zimmerstack_sandbox_fault` | Make the practice hotel's pretend booking site refuse a price, slow down or go down, so your handling can be tried. |
 
 ```bash
 # Claude Code

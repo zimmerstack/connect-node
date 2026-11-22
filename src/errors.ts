@@ -17,12 +17,16 @@ export class ZimmerStackError extends Error {
   readonly details: unknown;
   /** Seconds until the same request can pass, when the API said so (429 and 503). */
   readonly retryAfterSeconds: number | undefined;
+  /** The same as a moment: when the request can pass. Set with `retryAfterSeconds`; schedule your retry for it. */
+  readonly freesAt: Date | undefined;
   /** Which budget refused, on a RATE_LIMITED (writes, cells-hour, modifier-changes-day, …). */
   readonly scope: string | undefined;
   /**
    * true when the same request may pass later (a used-up budget, a fault on ZimmerStack's side, a
-   * network failure). The client has already retried what was worth holding a request open for;
-   * anything false is a verdict on the request itself: fix it, never resend it.
+   * network failure). The client has already retried what was worth holding a request open for, and
+   * only where sending again was safe: a refusal for a budget always, a fault or a network failure only
+   * for a read or a write that carries an idempotency key. Anything false is a verdict on the request
+   * itself: fix it, never resend it.
    */
   readonly retryable: boolean;
   /** The operation that failed, as the contract names it: "PUT /rates". Never contains the key. */
@@ -45,6 +49,7 @@ export class ZimmerStackError extends Error {
     this.code = init.code;
     this.details = init.details;
     this.retryAfterSeconds = init.retryAfterSeconds;
+    this.freesAt = init.retryAfterSeconds === undefined ? undefined : new Date(Date.now() + init.retryAfterSeconds * 1000);
     this.scope = init.scope;
     this.retryable = init.retryable;
     this.operation = init.operation;
