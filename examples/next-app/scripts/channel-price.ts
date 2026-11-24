@@ -2,7 +2,7 @@ import { MODIFIER_TAKES_EFFECT, channelPrice } from "@zimmerstack/connect";
 
 import { zs } from "@/lib/zimmerstack";
 
-/** Prices per channel (https://docs.zimmerstack.com/per-ota): read a channel's modifier and set it. */
+/** Prices per channel (https://docs.zimmerstack.com/guides/price-per-ota): read a channel's modifier and set it. */
 export async function sellHigherOnBookingCom(): Promise<void> {
   // #region three-calls
   // 1. Which channels, and what each one holds.

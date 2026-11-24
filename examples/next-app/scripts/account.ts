@@ -3,7 +3,7 @@ import { zs } from "@/lib/zimmerstack";
 /*
  * What a software partner used to ask ZimmerStack for, read by its own software with its company key:
  * its bills, a support ticket, and whether something is wrong on ZimmerStack's side
- * (https://docs.zimmerstack.com/billing, /support, /status).
+ * (https://docs.zimmerstack.com/guides/bills-by-api, /support, /status).
  */
 
 /** What is owed, how many hotels you may still add, and what was passed on at cost. Read only. */

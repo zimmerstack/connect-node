@@ -1,6 +1,6 @@
 import { zs } from "@/lib/zimmerstack";
 
-/** Bookings (https://docs.zimmerstack.com/bookings): read back what your booking engine handed to the PMS, and cancel one. */
+/** Bookings (https://docs.zimmerstack.com/one-hotel/website-bookings): read back what your booking engine handed to the PMS, and cancel one. */
 export async function readAndCancel(bookingId: number): Promise<void> {
   // #region read-and-cancel
   // What this API created on the property, newest first. Front-desk and OTA bookings are never listed.

@@ -14,7 +14,7 @@ https://docs.zimmerstack.com/llms-full.txt
 - The package refuses to start in a browser or in React Native. Do not work around that: the
   person's own frontend calls their own server, and the server calls ZimmerStack. Never put the key in
   a variable a bundler sends to the browser (`VITE_`, `NEXT_PUBLIC_`, `REACT_APP_`, `EXPO_PUBLIC_`).
-  An app with no server gets the smallest one: https://docs.zimmerstack.com/sdk#no-server. A plain
+  An app with no server gets the smallest one: https://docs.zimmerstack.com/guides/node-package#no-server. A plain
   `fetch` from a browser is refused too ("Failed to fetch"), on purpose.
 - `zsk_test_…` is a sandbox: nothing reaches a channel. Build and test with it. `zsk_live_…` is a real
   hotel. The package refuses to WRITE with a live key under a test runner; never switch that off to
@@ -24,8 +24,14 @@ https://docs.zimmerstack.com/llms-full.txt
   serves one hotel. A test company key that reaches one sandbox finds it by itself; with several,
   name one; a live key never guesses.
 - No key yet: a software company signs up, free, at https://www.zimmerstack.com/partners/pms-companies#join
-  and makes test keys in the partner portal (Developers); a hotel's owner makes one in Admin →
+  and makes its test key in the partner portal: Developers → Create company key → Your sandbox
+  (zsk_test_), with "Also add and remove hotels" ticked. A hotel's owner makes one in Admin →
   Developers → API keys.
+- A software company builds in the order a hotel is made, all with that test key: `zs.properties.list()`
+  (the hotels the key reaches), `zs.properties.create(hotel)` (a test hotel in its sandbox, born with its
+  first room type and one room-only rate plan), then on `zs.forProperty(id)`: `roomTypes.save`,
+  `ratePlans.save`, `availability.set` and `rates.set`. The same steps, one page each:
+  https://docs.zimmerstack.com/partner/test-key
 - A key is zsk_live_ (or zsk_test_ on a sandbox) + 40 letters and digits + a 6-character checksum (the CRC32 of everything before it, in base 62), so a key can be told from a look-alike without asking us. Where a person pastes a key (a settings screen, a
   deploy script), check it with `checkKey(value)` first: it tells a mistyped or cut-short key from a real
   one without sending it anywhere, and its `message` never contains the key.
@@ -125,8 +131,10 @@ hotel gets more, and `zs.limits.get()` says exactly.
   `zs.grid.load` gives major units; `zs.grid.save` takes them.
 - `rateMinor` and every other `…Minor` field is HUNDREDTHS of the major unit for every currency (450050 = 4500.50;
   1500000 = 15000 yen), which is the ISO minor unit only where the currency has two decimals. Prefer `rate`.
-- A price with more decimals than the currency has, a number or a decimal string alike, is rounded and named in
-  the answer's `rounded` list: show that list to the person, never hide it.
+- A price sent as a NUMBER with more decimals than the currency has (4500.505 in rupees) is rounded and named in
+  the answer's `rounded` list, and so is a fraction in a currency that has none (15000.5 yen): show that list to
+  the person, never hide it. A price sent as a decimal STRING takes at most two decimals: one with more
+  ("4500.505") is refused, 400 `VALIDATION`, and nothing is written. It is never rounded for you.
 - Never do money arithmetic on floats, and never divide by 100 yourself. The package's helpers work on the
   strings: `toAmount(value, decimals)`, `addAmounts`, `subtractAmounts`, `multiplyAmount(amount, factor, decimals)`,
   `compareAmounts`, `formatAmount(amount, { currency, decimals, locale })`. A ledger that stores whole minor
@@ -259,9 +267,13 @@ hotel gets more, and `zs.limits.get()` says exactly.
   to, once `ready` is true. `NOT_READY` lists the checks that did not pass (`err.details`): fix them and
   call again; never retry it in a loop. Only ZimmerStack support switches a hotel back.
 - Connecting a booking site: `zs.connectLinks.create({ propertyId, channel })` (scope `channels:connect`,
-  a LIVE key: a test key is refused) answers a one-time `url` for the hotel's own person, who signs in
-  to the booking site and confirms every room and rate match on ZimmerStack's page. Never ask a hotel for
-  a booking site's password, never store one, and never build a screen that takes one: no call accepts it.
+  a LIVE key: a test key is refused) answers a one-time `url` for the hotel's own person, who types the
+  hotel's id at the booking site (MakeMyTrip also its access token) and confirms every room and rate match
+  on ZimmerStack's page. Only Airbnb is connected from the link alone (the host signs in on Airbnb's own
+  page): every other booking site must first accept our connectivity partner for the hotel, in its extranet
+  or through its support. Send `hotelStep` to the hotel first and the `url` once that step is done. Never
+  ask a hotel for a booking site's sign-in, hotel id or token, never store one, and never build a screen
+  that takes one: no call accepts it.
   Listen for `channel.connect.completed` and `channel.connect.expired` (match on `data.connect.linkId`).
 - `zs.hotelKeys.list`, `.create`, `.rotate` and `.revoke` (scope `keys:manage`) manage the keys you made on
   a hotel you added; never a company key, never the hotel's own. A rotation makes a new key with the same name, scopes, addresses and expiry; the old one keeps answering for 24 hours (retireAt), then stops.
@@ -296,6 +308,11 @@ hotel gets more, and `zs.limits.get()` says exactly.
   id for it: sending the same ref again changes that entity, it never makes a second one. Several in
   one request: `zs.catalog.upsertRoomTypes` and `zs.catalog.upsertRatePlans`. All need the scope
   `catalog:write`.
+- A new rate plan needs `defaultRate`, its real price for a night: without it the request is refused
+  (400 `VALIDATION`, `details.refs` names the plans) and nothing in it is saved. Every date of a new
+  plan can be sold at that price until the price of each night is sent, so never write a test number
+  or a made-up one; ask the person for the price. `defaultRate: null` is refused for a plan the
+  integration made.
 - Every later write names ZimmerStack's numeric `id`, not the ref: room counts name a room type's
   id, prices and stay rules name a rate plan's id. `zs.roomTypes.list()` and `zs.ratePlans.list()`
   give them, and so does the answer of each `save`.
@@ -308,19 +325,28 @@ hotel gets more, and `zs.limits.get()` says exactly.
   booking site still sells it, an upcoming stay holds one of its rooms, or rooms are still assigned
   to the room type. Nothing was deleted. Show the message and stop; do not try another way round.
 
-## Adding and removing a hotel (a software partner's company key)
+## Adding, changing and removing a hotel (a software partner's company key)
 
-- Only a COMPANY key with the scope `properties:write` can do either; a hotel's own key cannot
-  (`COMPANY_KEY_REQUIRED`). The person ticks "Also add and remove hotels" when making the key in the
-  partner portal; only the account's owner or an Admin is offered that tick box. Neither call names a
-  hotel with `forProperty`.
+- Only a COMPANY key with the scope `properties:write` can do any of the three; a hotel's own key
+  cannot (`COMPANY_KEY_REQUIRED`). The person ticks "Also add and remove hotels" when making the key in
+  the partner portal; only the account's owner or an Admin is offered that tick box. None of the calls
+  names a hotel with `forProperty`.
 - `zs.properties.create({ name, owner, address, roomTypes })` adds a hotel and answers with its `id`:
   act on it with `zs.forProperty(id)`. The owner gets the sign-in details by email, never the caller.
   It joins the partner's monthly invoice. With a `zsk_test_` key the same call makes a sandbox, which
   is never billed. A partner may add 20 hotels an hour.
-- After adding: the hotel is not on the channel manager yet. The first `zs.roomTypes.save` (or
-  `zs.catalog.upsertRoomTypes`) with the same refs puts it there; then the rate plans, then room
-  counts and prices.
+- After adding: a hotel added with its room types is put on the channel manager when its billing
+  starts, usually at once (`channelManager` in the answer says). If a call answers 409
+  CHANNEL_MANAGER_DISABLED, send its room types again with the same refs (`zs.roomTypes.save` or
+  `zs.catalog.upsertRoomTypes`); then the rate plans, then room counts and prices.
+- `zs.properties.update(propertyId, { name, address })` changes the name or the address of a hotel the
+  partner added. Send only what changes: `name`, and under `address` any of `line1`, `city`,
+  `state`, `postalCode`. It never changes the hotel's country, currency, time zone, owner or tax id
+  (sending one is `VALIDATION`), and it changes the hotel's record in ZimmerStack, not the name of its
+  listing on a booking site. The answer's `changed` lists the fields whose stored value moved; empty
+  means everything sent was already stored. `PROPERTY_NOT_CHANGEABLE` means the hotel's owner let the
+  partner in, so the owner changes it: show the message and stop. After a new name, `delete` wants that
+  new name in `confirm`.
 - `zs.properties.delete(propertyId, { confirm })` (also `zs.properties.remove`) removes a hotel the
   partner added, FOR GOOD: its booking sites are disconnected, its rate plans and then its room types
   are removed from the channel manager, the hotel is closed and it comes off the invoice from the next

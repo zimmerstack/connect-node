@@ -3,7 +3,7 @@ import { findNotice } from "@zimmerstack/connect";
 import { zs } from "@/lib/zimmerstack";
 
 /**
- * The sandbox's pretend channel can fail (https://docs.zimmerstack.com/sandbox#faults): make it refuse a
+ * The sandbox's pretend channel can fail (https://docs.zimmerstack.com/guides/sandbox#faults): make it refuse a
  * price, and watch your software meet what a live hotel meets on a bad day. Test keys only.
  */
 export async function refusedPrice(ratePlanId: number, night: string): Promise<void> {

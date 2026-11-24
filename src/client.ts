@@ -40,6 +40,8 @@ import {
   type ModifierResult,
   type OperationKey,
   type Operations,
+  type PropertyChange,
+  type PropertyChanged,
   type PropertyCreate,
   type PropertyCreated,
   type PropertyRemoved,
@@ -467,7 +469,7 @@ class Core {
     const g = globalThis as { window?: { document?: unknown }; navigator?: { product?: string } };
     if ((typeof g.window !== "undefined" && typeof g.window.document !== "undefined") || g.navigator?.product === "ReactNative") {
       throw new ZimmerStackUsageError(
-        "@zimmerstack/connect runs on a server only. A key in a browser or a mobile app can be read by anyone and can change a hotel's prices on every channel: call your own server from here, and ZimmerStack from your server (https://docs.zimmerstack.com/sdk#no-server shows the smallest one). If a key was built into this page, anyone can read it now: revoke it and make a new one."
+        "@zimmerstack/connect runs on a server only. A key in a browser or a mobile app can be read by anyone and can change a hotel's prices on every channel: call your own server from here, and ZimmerStack from your server (https://docs.zimmerstack.com/guides/node-package#no-server shows the smallest one). If a key was built into this page, anyone can read it now: revoke it and make a new one."
       );
     }
     const key = options.apiKey ?? env("ZIMMERSTACK_CONNECT_KEY");
@@ -952,6 +954,35 @@ export class ZimmerStack {
       return created;
     },
     /**
+     * Change a hotel YOU ADDED: its name, its address, or both. A company key with the scope properties:write.
+     *
+     * Send only what changes: `name`, and under `address` any of `line1`, `city`, `state` and `postalCode`. A
+     * field you leave out stays as it is. It never changes the hotel's country, currency, time zone, owner or
+     * tax id (sending one is refused with VALIDATION), and it changes the hotel's record in ZimmerStack, not
+     * the name of its listing on a booking site.
+     *
+     * The answer is the hotel with its `address` and `changed`: the fields whose stored value moved. An empty
+     * `changed` means everything you sent was already stored. A hotel whose owner let you in is refused with
+     * PROPERTY_NOT_CHANGEABLE: its owner changes it. With a test key it changes one of your sandboxes, whose
+     * name keeps its ending, "(sandbox)". Safe to retry: the call carries an idempotency key.
+     *
+     * After a new name, `zs.properties.delete` wants that new name in `confirm`.
+     *
+     * @example
+     * const hotel = await zs.properties.update(61, { name: "Sea Breeze Suites", address: { line1: "14 Beach Road" } });
+     * hotel.changed; // ["name", "address.line1"]
+     */
+    update: async (propertyId: number, changes: PropertyChange, options?: WriteOptions): Promise<PropertyChanged> => {
+      if (!Number.isInteger(propertyId) || propertyId <= 0) {
+        throw new ZimmerStackUsageError("zs.properties.update needs the hotel's numeric id (zs.properties.list() names them)");
+      }
+      const sent = changes?.name !== undefined || Object.values(changes?.address ?? {}).some((value) => value !== undefined);
+      if (!sent) {
+        throw new ZimmerStackUsageError("zs.properties.update needs something to change: name, or line1, city, state or postalCode under address.");
+      }
+      return this.request("PATCH /properties/{propertyId}", { path: { propertyId }, body: changes, ...options });
+    },
+    /**
      * Remove a hotel YOU ADDED, for good. A company key with the scope properties:write.
      *
      * One call does what ZimmerStack does when a hotel's service ends, in this order: its booking sites
@@ -1176,19 +1207,24 @@ export class ZimmerStack {
     /** Your connect links, newest first; `propertyId` narrows them to one hotel. */
     list: (query?: Op<"GET /connect-links">["query"], options?: ReadOptions): Promise<ConnectLinkList> => this.request("GET /connect-links", { query, ...options }),
     /**
-     * Make a one-time link for ONE hotel and ONE booking site. Send the answer's `url` to the hotel's own
-     * person: on ZimmerStack's hosted page they sign in to the booking site, confirm every room and rate
-     * match and press Start selling. Your software never holds a booking site's password, and the call
-     * takes none. You hear `channel.connect.completed`, or `channel.connect.expired` if the link ran out.
+     * Make a one-time link for ONE hotel and ONE booking site. Only Airbnb is connected from the link alone
+     * (the host signs in on Airbnb's own page). Every other booking site must FIRST accept our connectivity
+     * partner for the hotel, in its extranet or through its support: send `hotelStep` to the hotel first, and
+     * the answer's `url` once that step is done. On ZimmerStack's hosted page the hotel's own person types
+     * the hotel's id at the booking site (MakeMyTrip also its access token), confirms every room and rate
+     * match and presses Start selling. The call takes no booking-site detail and no match. You hear
+     * `channel.connect.completed`, or `channel.connect.expired` if the link ran out.
      *
      * THE `url` IS SHOWN ONCE: it is in this answer only, and null on a replay of the same request
      * (`shownOnce(answer)` returns it or says what to do). `hotelStep` is what the hotel does at the booking
-     * site first, for your own screen or message. A LIVE key only: a sandbox has no booking site, so a test
-     * key is refused (LIVE_KEY_REQUIRED). The hotel is `propertyId` in the body; `forProperty` is not read.
+     * site first (null for Airbnb), for your own screen or message; it can take days. A LIVE key only: a
+     * sandbox has no booking site, so a test key is refused (LIVE_KEY_REQUIRED). The hotel is `propertyId`
+     * in the body; `forProperty` is not read.
      *
      * @example
      * const made = await zs.connectLinks.create({ propertyId: 61, channel: "bookingcom", returnUrl: "https://pms.example/hotels/61" });
-     * await sendToTheHotel(shownOnce(made), made.hotelStep);
+     * await tellTheHotel(made.hotelStep); // first
+     * await sendOnceTheStepIsDone(shownOnce(made)); // then the link
      */
     create: (body: ConnectLinkCreate, options?: WriteOptions): Promise<ConnectLinkCreated> => this.request("POST /connect-links", { body, ...options }),
     /** Where one link stands: pending, opened, completed, expired or revoked. Never its address again. */

@@ -2,7 +2,7 @@ import type { BookingCreate } from "@zimmerstack/connect";
 
 import { zs } from "@/lib/zimmerstack";
 
-// The Quickstart's steps (https://docs.zimmerstack.com/quickstart) with the package, one function per
+// The Quickstart's steps (https://docs.zimmerstack.com/partner/first-call) with the package, one function per
 // step. zs() is this app's one client: lib/zimmerstack.ts.
 
 /** Which hotel is this key for, and what may it do? */

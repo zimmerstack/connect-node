@@ -7,4 +7,4 @@ here cannot be merged.
 - **Found a bug, or something confusing?** Open an issue here, or write to support@zimmerstack.com.
 - **Want to read how it works?** Start with `src/client.ts`. `src/generated.ts` and
   `src/mcp/reference.generated.ts` are written from the API's contract and are never edited by hand.
-- **Want to run it?** `npm install`, then `npm run build`. The guides are at https://docs.zimmerstack.com/sdk.
+- **Want to run it?** `npm install`, then `npm run build`. The guides are at https://docs.zimmerstack.com/guides/node-package.

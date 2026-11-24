@@ -50,8 +50,13 @@ function serve(): void {
 
   let pending = 0;
   let ended = false;
+  let exiting = false;
+  // Exit only once stdout has handed every answer to the OS: on a pipe Node may still be writing a long answer
+  // (on macOS pipe writes are asynchronous), and exiting at once cut it short (seen in the smoke run, 24 Nov 2026).
   const done = () => {
-    if (ended && pending === 0) process.exit(0);
+    if (!ended || pending !== 0 || exiting) return;
+    exiting = true;
+    process.stdout.write("", () => process.exit(0));
   };
   const write = (answer: unknown) => {
     if (answer !== undefined) process.stdout.write(JSON.stringify(answer) + "\n");

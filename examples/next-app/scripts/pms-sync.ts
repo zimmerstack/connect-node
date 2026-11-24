@@ -1,6 +1,6 @@
 import { zs } from "@/lib/zimmerstack";
 
-// Channel manager (https://docs.zimmerstack.com/channel-manager), for a PMS that keeps its own bookings:
+// Channel manager (https://docs.zimmerstack.com/reference), for a PMS that keeps its own bookings:
 // the hotel's room types and rate plans by API, and the bookings that come back.
 
 /** The PMS owns the hotel's structure: send the list, by your own ids. Needs the scope catalog:write. */

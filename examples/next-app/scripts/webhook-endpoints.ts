@@ -3,7 +3,7 @@ import { shownOnce } from "@zimmerstack/connect";
 import { zs } from "@/lib/zimmerstack";
 
 /**
- * Webhooks by API (https://docs.zimmerstack.com/webhooks#by-api): a software partner's company key with
+ * Webhooks by API (https://docs.zimmerstack.com/guides/webhooks#by-api): a software partner's company key with
  * the scope webhooks:manage creates and looks after its own company webhook endpoints. No hotel is named:
  * an endpoint belongs to you. A test key manages the endpoints of your sandboxes.
  */

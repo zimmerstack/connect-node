@@ -4,7 +4,7 @@ import { zs } from "@/lib/zimmerstack";
 
 /**
  * Cancel a booking a guest made on the hotel's own website, from your PMS, with the refund the person at
- * the desk chose (https://docs.zimmerstack.com/website-bookings#cancel). The key needs the scope
+ * the desk chose (https://docs.zimmerstack.com/guides/website-bookings#cancel). The key needs the scope
  * direct-bookings:cancel. Call it from that person's own cancel button: it moves the guest's money.
  */
 export async function cancelWebsiteBooking(bookingId: number, refund: DirectBookingCancel["refund"], reason: string): Promise<void> {

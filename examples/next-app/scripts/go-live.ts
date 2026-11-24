@@ -5,18 +5,23 @@ import { zs } from "@/lib/zimmerstack";
 /*
  * A software partner's company key, without the partner portal: a one-time connect link for a booking
  * site, the readiness report and go-live, and the keys it made on a hotel
- * (https://docs.zimmerstack.com/connect-links, /go-live, /hotel-keys).
+ * (https://docs.zimmerstack.com/guides/connect-an-ota, /partner/go-live, /guides/keys-and-scopes#hotel-keys).
  */
 
-/** Have the hotel's own person connect Booking.com. Your software never holds the booking site's password. */
-export async function sendConnectLink(propertyId: number, sendToTheHotel: (url: string, firstStep: string | null) => Promise<void>): Promise<string> {
+/**
+ * Have the hotel's own person connect Booking.com. Only Airbnb is connected from the link alone: every other
+ * booking site must first accept our connectivity partner for the hotel, so the step goes before the link.
+ */
+export async function sendConnectLink(propertyId: number, stepThenLink: (firstStep: string | null, url: string) => Promise<void>): Promise<string> {
   // #region connect-link
   // One link, one hotel, one booking site. A live key only: a sandbox has no booking site to connect.
   const made = await zs().connectLinks.create({ propertyId, channel: "bookingcom", reference: "onboarding-4471" });
 
-  // The address is in this answer only, and opens once. Send it now; never log it.
-  // hotelStep is what the hotel does at the booking site first: put it in your message.
-  await sendToTheHotel(shownOnce(made), made.hotelStep);
+  // hotelStep is what the hotel does at the booking site FIRST (null for Airbnb). It can take days.
+  // Tell the hotel the step now; send the address once the hotel has done it. On the page the
+  // hotel's person types its hotel id at the booking site, matches the rooms and starts selling.
+  // The address is in this answer only and opens once: keep it safe, never log it.
+  await stepThenLink(made.hotelStep, shownOnce(made));
   console.log(withoutShownOnce(made).link.id, made.link.status, "opens until", made.link.expiresAt);
   // #endregion
   return made.link.id;

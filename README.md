@@ -4,30 +4,39 @@ Add a channel manager to your hotel software. This package sends a hotel's rooms
 Booking.com, Airbnb, Expedia, Agoda, MakeMyTrip and the other booking sites, and brings their bookings
 back to you.
 
-- **Free to build.** You get a practice hotel the moment you sign up. Nothing you do there reaches a
-  real booking site.
+- **Free to build.** You get a sandbox with a practice hotel the moment you sign up, and your software
+  can create more. Nothing you do there reaches a real booking site.
 - **Public prices.** A fixed price for each live property a month, on one invoice. A partner in India
   pays the price plus GST. A partner outside India pays its own price, with nothing added. You accept
   it in the partner portal. Going live has a one-time onboarding fee of $50, paid once in the portal
-  before your live key. No call needed: <https://docs.zimmerstack.com/pricing>
+  before your live key. The price list: <https://docs.zimmerstack.com/pricing>
 - **Made for AI coding tools.** The package carries its own rules file and a helper your coding agent
   can ask. See [For AI coding agents](#for-ai-coding-agents).
 
-[Docs](https://docs.zimmerstack.com) · [Quickstart](https://docs.zimmerstack.com/quickstart) ·
+[Docs](https://docs.zimmerstack.com) · [Quickstart](https://docs.zimmerstack.com/partner/first-call) ·
 [Pricing](https://docs.zimmerstack.com/pricing) · [Partner portal](https://partner.zimmerstack.com/login) ·
 [Starter app](https://github.com/zimmerstack/connect-starter) ·
 [Source](https://github.com/zimmerstack/connect-node) ·
 [Changelog](https://docs.zimmerstack.com/changelog) · <support@zimmerstack.com>
 
-## Start in five minutes
+## Start here
+
+You learn the API in the order a hotel is made: the hotel, its room types, its rate plans, then its
+rooms and prices. All of it happens in your sandbox, with a test key. Nothing reaches a real booking
+site and nothing is billed.
 
 **1. Sign up.** It is free and takes one emailed code:
-<https://www.zimmerstack.com/partners/pms-companies#join>. Your practice hotel is made for you. We call
-it a sandbox. Working for one hotel only? Its owner makes your key in Admin → Developers → API keys, and
-you can skip to step 3.
+<https://www.zimmerstack.com/partners/pms-companies#join>. You get a sandbox: the place where your test
+hotels live. A test hotel is a practice hotel that no booking site ever sees. One example test hotel is
+made for you. Working for one hotel only? Its owner makes your key in Admin → Developers → API keys.
+You join at step 3 and skip step 6, because your hotel is already there. Where a later step says
+`hotel`, use `zs`.
 
 **2. Make a test key.** Open the [partner portal](https://partner.zimmerstack.com/login), then
-Developers, then Create key. A test key starts with `zsk_test_`. It works on your practice hotel only.
+Developers, then **Create company key**. Under **Reaches**, choose **Your sandbox (zsk_test_)**. Keep
+**Also add and remove hotels** ticked, then press **Create company key**. The key starts with
+`zsk_test_` and is shown once, so copy it now. It is one key for all your test hotels, so each call
+says which hotel it is for.
 
 **3. Install the package.** It needs Node 20 or newer.
 
@@ -42,21 +51,84 @@ npm install @zimmerstack/connect
 ZIMMERSTACK_CONNECT_KEY=zsk_test_…
 ```
 
-**5. Make your first call.**
+**5. Make your first call.** Ask which hotels your key reaches.
 
 ```ts
 import { ZimmerStack } from "@zimmerstack/connect";
 
 const zs = new ZimmerStack(); // reads ZIMMERSTACK_CONNECT_KEY. Make one and reuse it.
 
-// Which hotel is this?
-const hotel = await zs.property.get();
-console.log(hotel.name, hotel.currency, hotel.timezone);
-
-// The rate calendar for two weeks: rooms down the side, nights across the top.
-const grid = await zs.grid.load("2026-12-01", "2026-12-14");
-console.log(grid.rows.length, "room types");
+const { properties } = await zs.properties.list();
+for (const p of properties) console.log(p.id, p.name, p.currency, p.sandbox);
 ```
+
+The list holds the example test hotel from step 1. Next, your software makes a hotel itself.
+
+**6. Create a hotel.** With a test key, this call makes a hotel in your sandbox. With a live key, the same call adds a real hotel. The request is
+checked exactly as for a real hotel, but nobody is emailed and nothing is billed. You can hold up to
+five test hotels at one time, the example included.
+
+```ts
+const made = await zs.properties.create({
+  name: "The Lantern House",
+  owner: { name: "Asha Rao", email: "asha@lanternhouse.example", phone: "+91 98765 43210" },
+  address: { line1: "14 Hill Road", city: "Shimla", country: "IN" },
+  roomTypes: [{ ref: "rt-deluxe", name: "Deluxe Room", roomCount: 10, defaultRate: 4500 }],
+});
+
+const hotel = zs.forProperty(made.id); // the same client, working on this hotel
+```
+
+The request needs at least one room type. So the hotel is born with its first room type, and with one
+room-only rate plan for it at `defaultRate`: 4500 means 4,500.00 in the hotel's own currency.
+
+**7. Create room types.** A room type is a kind of room the hotel sells. This hotel has the Deluxe Room
+already, so add a second one. `ref` is your own id for it.
+
+```ts
+const suite = await hotel.roomTypes.save({ ref: "rt-suite", name: "Suite", roomCount: 2, adults: 3 });
+suite.id; // ZimmerStack's id for it: name it when you set the rooms left to sell
+```
+
+**8. Create rate plans.** A rate plan is one way to sell a room type. Prices belong to rate plans. Add
+breakfast to the Deluxe Room, and give the Suite its first rate plan.
+
+```ts
+const breakfast = await hotel.ratePlans.save({ ref: "rp-bb", roomTypeRef: "rt-deluxe", name: "Bed and breakfast", mealPlan: "CP", defaultRate: 5000 });
+await hotel.ratePlans.save({ ref: "rp-suite", roomTypeRef: "rt-suite", name: "Room only", mealPlan: "EP", defaultRate: 9000 });
+breakfast.id; // name it when you set prices and stay rules
+```
+
+**9. Send availability and rates.** Availability is the rooms left to sell on each night. A rate is the
+price of one rate plan on each night. Send both for three nights.
+
+```ts
+// Rooms left to sell name a room type's id. The Deluxe Room was born with the hotel, so read its id.
+const deluxe = (await hotel.roomTypes.list()).find((room) => room.ref === "rt-deluxe")!;
+await hotel.availability.set([{ roomTypeId: deluxe.id, dateFrom: "2026-12-24", dateTo: "2026-12-26", available: 3 }]);
+
+// Prices name a rate plan's id.
+const accepted = await hotel.rates.set([{ ratePlanId: breakfast.id, dateFrom: "2026-12-24", dateTo: "2026-12-26", rate: 5500 }]);
+
+// Accepted means ZimmerStack has saved it. On a test hotel a change lands within a minute and stops there.
+const batch = await hotel.batches.wait(accepted[0]!.batchId);
+console.log(batch.status); // "landed"
+```
+
+Each step has its own page in the docs, with every field explained:
+[get a test key](https://docs.zimmerstack.com/partner/test-key) ·
+[make your first call](https://docs.zimmerstack.com/partner/first-call) ·
+[create a hotel](https://docs.zimmerstack.com/partner/create-hotel) ·
+[create room types](https://docs.zimmerstack.com/partner/room-types) ·
+[create rate plans](https://docs.zimmerstack.com/partner/rate-plans) ·
+[send availability and rates](https://docs.zimmerstack.com/partner/send-availability-and-rates).
+
+**Next: receive a booking, then go live.** Your test hotel can now take a test booking.
+[Receive a booking](https://docs.zimmerstack.com/partner/receive-booking) shows how to add your webhook
+address and pretend a booking came in; the short version is in [Receive bookings](#receive-bookings)
+below. Then [accept the price](https://docs.zimmerstack.com/partner/price) and
+[add your first hotel](https://docs.zimmerstack.com/partner/first-hotel) with a live key. The calls
+stay the same: with a live key they work on real hotels.
 
 Want a working app to start from? The [starter app](https://github.com/zimmerstack/connect-starter) has
 a one-click Deploy button.
@@ -70,7 +142,7 @@ calls ZimmerStack.
 - Never put the key in a `VITE_`, `NEXT_PUBLIC_`, `REACT_APP_` or `EXPO_PUBLIC_` variable. Those are
   sent to every visitor's browser.
 - Your app has no server (a Vite, Lovable or Bolt page)? The docs show the smallest one:
-  <https://docs.zimmerstack.com/sdk#no-server>
+  <https://docs.zimmerstack.com/guides/node-package#no-server>
 
 ## What you can do
 
@@ -105,6 +177,7 @@ calls ZimmerStack.
 | Create a booking from your own booking engine | `zs.bookings.create(booking)` |
 | Work with many hotels on one key | `zs.forProperty(propertyId)` |
 | Add a hotel | `zs.properties.create(hotel)` |
+| Change a hotel | `zs.properties.update(propertyId, changes)` |
 | Remove a hotel I added | `zs.properties.delete(propertyId, { confirm })` |
 | Let a hotel connect a booking site itself | `zs.connectLinks.create({ propertyId, channel })` |
 | Check that a hotel is ready, and make my software its source of truth | `zs.readiness.get()` · `zs.readiness.goLive()` |
@@ -128,9 +201,11 @@ calendar helpers `zs.grid.load()` and `zs.grid.save()` always use normal numbers
 
 `rateMinor` is still returned, and is always hundredths of the currency's unit: that is paise or cents
 where a currency has two decimals, and it is not yen (`1500000` is 15,000 yen). Read `rate` and you never
-divide. A price with more decimals than the currency has, a number or a decimal string alike, is
-rounded and named in the answer's `rounded` list, so nothing changes without the answer saying so. A
-three-decimal currency is kept as a whole amount for now.
+divide. A number with more decimals than the currency has (`4500.505` in rupees) is rounded and named in
+the answer's `rounded` list, and so is a fraction in a currency that has none, so nothing changes
+without the answer saying so. A decimal string takes at most two decimals: one with more
+(`"4500.505"`) is refused with a 400 `VALIDATION` error and nothing is saved. It is never rounded for
+you. A three-decimal currency is kept as a whole amount for now.
 
 The package has helpers for money, so you never do the arithmetic on floats (from 0.9.0). They take and
 return the same decimal strings, and `decimals` comes from the API's own answer:
@@ -187,7 +262,7 @@ Room counts usually reach the booking sites in seconds. A full calendar of price
 Inside a short-lived function (Vercel, Netlify), show the `batchId` and read `zs.sync.get()` later
 instead of waiting.
 
-Guide: <https://docs.zimmerstack.com/rate-grid>
+Guide: <https://docs.zimmerstack.com/guides/rate-grid>
 
 ## See what a change will do, and read what it did not do
 
@@ -251,8 +326,8 @@ manager was last seen holding, with any value it refused in its own words. It ca
 site's own screen: it reads the channel manager's copy, as last seen. "What your software last sent" is
 there for changes made after this feature shipped.
 
-Guides: <https://docs.zimmerstack.com/dry-run> · <https://docs.zimmerstack.com/notices> ·
-<https://docs.zimmerstack.com/close-and-reopen> · <https://docs.zimmerstack.com/explain>
+Guides: <https://docs.zimmerstack.com/guides/dry-run> · <https://docs.zimmerstack.com/guides/notices> ·
+<https://docs.zimmerstack.com/guides/close-and-reopen> · <https://docs.zimmerstack.com/guides/explain-one-night>
 
 ## Set up a hotel's rooms: create, change, delete
 
@@ -263,7 +338,8 @@ sell it, like "Bed and breakfast". Prices belong to rate plans.
 // `ref` is your own id for the room type.
 const room = await zs.roomTypes.save({ ref: "deluxe", name: "Deluxe Room", roomCount: 8, adults: 2 });
 
-// `defaultRate` is the plan's usual price: 4500 means 4,500.00.
+// `defaultRate` is the plan's real price for a night: 4500 means 4,500.00. A new rate plan needs it:
+// every date of the plan can be sold at this price until you send the price of each night.
 const plan = await zs.ratePlans.save({ ref: "deluxe-bb", roomTypeRef: "deluxe", name: "Bed and breakfast", mealPlan: "CP", defaultRate: 4500 });
 
 room.id; // name it when you set the rooms left to sell
@@ -284,7 +360,7 @@ await zs.roomTypes.delete("deluxe"); // its rate plans are deleted with it
 - Call a delete only when a person chose to delete that one thing. Never from a loop or a clean-up
   script.
 
-Guide: <https://docs.zimmerstack.com/channel-manager>
+Guide: <https://docs.zimmerstack.com/reference>
 
 ## Receive bookings
 
@@ -378,7 +454,7 @@ hotel `zs.bookings.create` also takes `nightlyRateIncludesTaxes`; `false` is ref
 `TAXES_NOT_CONFIGURED` where the hotel has confirmed no lines, and `TAXES_INSIDE_RATES` where all its
 taxes sit inside its prices.
 
-Guide: <https://docs.zimmerstack.com/webhooks>
+Guide: <https://docs.zimmerstack.com/guides/webhooks>
 
 ## A different price on each booking site
 
@@ -409,7 +485,7 @@ automatically.
 One call to `zs.channels.setModifier()` moves every price on that booking site. Call it when a person
 saved the setting. Never from a loop, a timer or a set-up script.
 
-Guide: <https://docs.zimmerstack.com/per-ota>
+Guide: <https://docs.zimmerstack.com/guides/price-per-ota>
 
 ## Many hotels on one key
 
@@ -421,8 +497,8 @@ const hotel = zs.forProperty(properties[0]!.id); // the same client, working on 
 await hotel.grid.load("2026-12-01", "2026-12-14");
 ```
 
-- A **test** company key reaches your practice hotels. While you have only one, the package finds it by
-  itself, so the Start example works unchanged. With several, name one.
+- A **test** company key reaches all your practice hotels. While you have only one, the package finds it
+  by itself. With several, name one, as the Start does from step 6.
 - A **live** key never guesses. Always name the hotel.
 - An app that serves one hotel can name it once: `ZIMMERSTACK_PROPERTY_ID=61` on the server, or
   `new ZimmerStack({ propertyId: 61 })`.
@@ -451,12 +527,22 @@ const hotel = zs.forProperty(added.id);
 await hotel.roomTypes.save({ ref: "rt-river", name: "River View Room", roomCount: 6, adults: 2 });
 ```
 
-The hotel works at once and joins your monthly invoice on the next 1st. Its first room types put it on
-the channel manager; then you connect its booking sites in the partner portal.
+The hotel works at once and joins your monthly invoice on the next 1st. It is put on the channel manager
+when its billing starts, with the room types you sent; then you connect its booking sites in the partner
+portal.
 
 ```ts
-// Remove a hotel you added. confirm is the hotel's exact name, so a wrong id never removes a hotel.
-const gone = await zs.properties.delete(added.id, { confirm: added.name });
+// Change a hotel you added: its name, its address, or both. Only what you send changes.
+const changed = await zs.properties.update(added.id, { name: "Ganga Riverside Guest House", address: { line1: "16 Assi Ghat Road" } });
+changed.changed; // ["name", "address.line1"]
+```
+
+It never changes the hotel's country, currency, time zone, owner or tax id. It changes the hotel in
+ZimmerStack, not the name of its listing on a booking site.
+
+```ts
+// Remove a hotel you added. confirm is the hotel's exact name as it is now, so a wrong id never removes a hotel.
+const gone = await zs.properties.delete(added.id, { confirm: changed.name });
 gone.channelManager.state; // "REMOVED", or "RETRYING" while one step is still finishing
 ```
 
@@ -471,27 +557,31 @@ package waits up to a minute and a half for these two calls. If no answer arrive
 error), you can safely call `delete` again: a hotel that is already gone answers `replay: true`, and
 one that is still being removed answers `PROPERTY_BUSY` (wait, then ask again).
 
-Guide: <https://docs.zimmerstack.com/hotels>
+Guide: <https://docs.zimmerstack.com/guides/add-and-remove-hotels>
 
 ## Connect a booking site, go live, and a hotel's keys
 
 A software company's **company key** can do three more things without the partner portal (from 0.9.0).
 Each needs its own permission, ticked when the key is made.
 
-**A connect link.** The hotel's own person connects a booking site. Your software never holds the
-booking site's password, and no call takes one.
+**A connect link.** The hotel's own person connects a booking site. Only Airbnb is connected from
+the link alone: the host signs in on Airbnb's own page. Every other booking site must first accept
+our connectivity partner for the hotel, in its extranet or through its support. That step can take
+days, and no call does it: `hotelStep` in the answer says how.
 
 ```ts
 import { shownOnce } from "@zimmerstack/connect";
 
 const made = await zs.connectLinks.create({ propertyId: 61, channel: "bookingcom" });
-await sendToTheHotel(shownOnce(made), made.hotelStep); // the link, and what the hotel does at the booking site first
+await tellTheHotel(made.hotelStep); // the step at the booking site, first (null for Airbnb)
+await sendOnceTheStepIsDone(shownOnce(made)); // then the link
 ```
 
-The hotel opens the link on ZimmerStack's page, signs in to the booking site, confirms each room and
-rate match, and presses Start selling. You then receive `channel.connect.completed`. A link is made
-with a **live** key only: a practice hotel has no booking site to connect. Permission:
-`channels:connect`.
+The hotel's person opens the link on ZimmerStack's page and types the hotel's id at the booking site
+(MakeMyTrip and Goibibo also ask for the access token they give). Then they confirm each room and
+rate match, and press Start selling. You then receive `channel.connect.completed`. No call takes the
+booking site's details or a match. A link is made with a **live** key only: a practice hotel has no
+booking site to connect. Permission: `channels:connect`.
 
 **Readiness and go-live.** A hotel you add is yours from the first day. A hotel that let you in with
 your vendor code is not, until it goes live.
@@ -530,8 +620,8 @@ console.log(withoutShownOnce(minted));                        // safe to log: th
 in it: `shownOnce` then throws an error that names the call that gets you a new one. It never hands you
 an empty value to store by mistake.
 
-Guides: <https://docs.zimmerstack.com/connect-links> · <https://docs.zimmerstack.com/go-live> ·
-<https://docs.zimmerstack.com/authentication#hotel-keys>
+Guides: <https://docs.zimmerstack.com/guides/connect-an-ota> · <https://docs.zimmerstack.com/partner/go-live> ·
+<https://docs.zimmerstack.com/guides/keys-and-scopes#hotel-keys>
 
 ## Your bills, support and status
 
@@ -555,8 +645,8 @@ const { incidents } = await zs.status.get();  // is something wrong on ZimmerSta
 - `zs.status.get()` lists the incidents that touch your hotels. During one, keep what your people
   changed and send it when it ends.
 
-Guides: <https://docs.zimmerstack.com/billing> · <https://docs.zimmerstack.com/support> ·
-<https://docs.zimmerstack.com/status>
+Guides: <https://docs.zimmerstack.com/guides/bills-by-api> · <https://docs.zimmerstack.com/guides/support> ·
+<https://docs.zimmerstack.com/guides/status-and-incidents>
 
 ## Bookings from the hotel's own website
 
@@ -618,7 +708,7 @@ that booking. The nights come back and no money moves. To try a no-show, call
 `zs.sandbox.bookings.noShow(bookingId)` on that booking: your address receives the real
 `direct.booking.modified`, and `{ undo: true }` takes it back.
 
-Guide: <https://docs.zimmerstack.com/website-bookings>
+Guide: <https://docs.zimmerstack.com/guides/website-bookings>
 
 ## When the API says no
 
@@ -650,7 +740,7 @@ const zs = new ZimmerStack({ onEvent: (e) => e.type === "wait" && console.log(e.
 await zs.rates.set(updates, { maxWaitSeconds: 3600 }); // "PUT /rates lands in about 25 minutes (waiting for the cells-hour budget)."
 ```
 
-Every code, what it means and what to do: <https://docs.zimmerstack.com/errors>
+Every code, what it means and what to do: <https://docs.zimmerstack.com/guides/errors>
 
 ## When something is wrong: the doctor
 
@@ -702,7 +792,7 @@ npx @zimmerstack/connect doctor --room-type 412 --night 2026-12-31
   error code, the address and the request id of each call, never a body. An address you do not
   recognise is the first sign of a leaked key.
 
-Guide: <https://docs.zimmerstack.com/authentication>
+Guide: <https://docs.zimmerstack.com/guides/keys-and-scopes>
 
 ## What the package does for you
 
@@ -718,7 +808,7 @@ Guide: <https://docs.zimmerstack.com/authentication>
 | A refused key is not tried again | After a key is refused, it stops calling. |
 | A test must not touch a real hotel | Refuses to change anything with a `zsk_live_` key while your tests run. |
 
-Limits in full: <https://docs.zimmerstack.com/limits>
+Limits in full: <https://docs.zimmerstack.com/guides/rate-limits>
 
 ## Limits
 
@@ -829,7 +919,7 @@ it (`arrivesCancelled: true`), a website booking and its no-show, and a channel 
 makes its pretend booking site refuse the next price, so you can watch your software handle it. A software company makes test keys
 in the partner portal under Developers. A hotel's owner makes one in Admin → Developers → API keys.
 
-Guide: <https://docs.zimmerstack.com/sandbox>
+Guide: <https://docs.zimmerstack.com/guides/sandbox>
 
 ## For AI coding agents
 
@@ -885,15 +975,15 @@ test key only and refuses a live one, so an agent cannot change a real hotel thr
 the rules and the lookups still work.
 
 The whole API in one file an agent can read: <https://docs.zimmerstack.com/llms-full.txt>.
-More: <https://docs.zimmerstack.com/ai>
+More: <https://docs.zimmerstack.com/guides/build-with-ai>
 
 ## Words used here
 
 | Word | What it means |
 |---|---|
 | Booking site | A website that sells the hotel's rooms: Booking.com, Airbnb, Expedia and the rest. Travel people say OTA. The API calls each one a channel. |
-| Sandbox | Your practice hotel. It behaves like a real one, but no booking site ever sees it. |
-| Key | A password for your software. `zsk_test_` works on a sandbox, `zsk_live_` on a real hotel. |
+| Sandbox | Where your practice hotels live. The docs call one a test hotel. It behaves like a real hotel, but no booking site ever sees it. |
+| Key | A password for your software. `zsk_test_` works in your sandbox, `zsk_live_` on a real hotel. |
 | Company key | One key for all of a software company's hotels. Each call says which hotel it is for. |
 | Room type | A kind of room the hotel sells, like "Deluxe Room". |
 | Rate plan | One way to sell a room type, like "Bed and breakfast". Prices belong to rate plans. |
@@ -901,14 +991,14 @@ More: <https://docs.zimmerstack.com/ai>
 | Webhook | A message ZimmerStack sends to your server when something happens, such as a new booking. |
 | Permission | What a key may do, like `catalog:write` for changing room types and rate plans. The API calls it a scope. |
 
-More words: <https://docs.zimmerstack.com/glossary>
+More words: <https://docs.zimmerstack.com/words>
 
 ## Find everything
 
 | Where | What is there |
 |---|---|
 | <https://docs.zimmerstack.com> | The guides and the full reference |
-| <https://docs.zimmerstack.com/quickstart> | The first calls, step by step |
+| <https://docs.zimmerstack.com/partner/first-call> | The first calls, step by step |
 | <https://docs.zimmerstack.com/pricing> | What a live property costs a month |
 | <https://www.zimmerstack.com/partners/pms-companies#join> | Sign up, free |
 | <https://partner.zimmerstack.com/login> | The partner portal: your practice hotels, keys, webhooks, hotels and bills |

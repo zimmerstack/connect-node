@@ -3,7 +3,7 @@ import { isDriftEvent, isOtaBookingEvent, isSyncEvent, isWebsiteBookingEvent, ty
 import { zs } from "@/lib/zimmerstack";
 
 /**
- * The event log (https://docs.zimmerstack.com/events): the webhook is the nudge, the log is the truth.
+ * The event log (https://docs.zimmerstack.com/guides/event-log): the webhook is the nudge, the log is the truth.
  * Run this when a webhook arrives, on a schedule, and when your server starts. `place` is the last
  * sequence you applied for this hotel; keep it in your own database, with what you applied.
  */

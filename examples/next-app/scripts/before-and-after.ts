@@ -3,7 +3,7 @@ import { findNotice, noticesOf, type CloseDone, type WriteAccepted } from "@zimm
 import { zs } from "@/lib/zimmerstack";
 
 /*
- * See what a write will do, and read what it did not do (https://docs.zimmerstack.com/dry-run,
+ * See what a write will do, and read what it did not do (https://docs.zimmerstack.com/guides/dry-run,
  * /notices, /close-and-reopen, /explain). A 202 says a value is in ZimmerStack's record; these say
  * whether it does what you meant.
  */

@@ -335,7 +335,7 @@ async function requestFindings(zs: ZimmerStack, now: Date, signal: AbortSignal |
       level: recent || fault ? "attention" : "info",
       check: "requests",
       message: `${reason}: ${plural(items.length, "request")} refused in the last 24 hours${more ? " (and more)" : ""}, the last ${ago(last.at, now)}, on ${list(routes)}.${last.requestId ? ` Last request id: ${last.requestId}.` : ""}`,
-      action: REFUSAL_ADVICE[reason] ?? (fault ? "That is a fault on ZimmerStack's side. If it repeats, write to support@zimmerstack.com and quote the request id." : "Look the code up: https://docs.zimmerstack.com/errors"),
+      action: REFUSAL_ADVICE[reason] ?? (fault ? "That is a fault on ZimmerStack's side. If it repeats, write to support@zimmerstack.com and quote the request id." : "Look the code up: https://docs.zimmerstack.com/guides/errors"),
     });
   }
   // The newest requests of any status, for the addresses they came from: an address that is not yours is the first sign of a leaked key.

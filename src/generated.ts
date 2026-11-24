@@ -2,7 +2,7 @@
 // Do not edit: change the contract, then run `pnpm --dir apps/connect-sdk run generate`.
 
 /** This package's version, sent as the user agent so ZimmerStack can tell which client a request came from. */
-export const SDK_VERSION = "0.9.0";
+export const SDK_VERSION = "0.9.1";
 /** Where the API lives. The key is sent nowhere else. */
 export const API_ORIGIN = "https://api.zimmerstack.com";
 export const API_PREFIX = "/api/v1/connect-api/v1";
@@ -110,6 +110,7 @@ export const ERROR_CODES = [
   "SANDBOX_LIMIT",
   "CONFIRMATION_MISMATCH",
   "PROPERTY_NOT_REMOVABLE",
+  "PROPERTY_NOT_CHANGEABLE",
   "PROPERTY_BUSY",
   "PRICE_UNAVAILABLE",
   "CONNECT_LINK_NOT_FOUND",
@@ -302,7 +303,7 @@ export interface Error {
   /** Human-readable, may change; branch on data.code */
   message: string;
   data: {
-    code: "API_KEY_INVALID" | "API_KEY_REVOKED" | "API_KEY_EXPIRED" | "CONNECT_API_NOT_CONFIGURED" | "IP_NOT_ALLOWED" | "SCOPE_MISSING" | "PROPERTY_UNAVAILABLE" | "CHANNEL_MANAGER_DISABLED" | "PMS_NOT_AVAILABLE" | "VALIDATION" | "RANGE_INVALID" | "HORIZON" | "TOO_MANY_UPDATES" | "TOO_MANY_CELLS" | "UNKNOWN_ROOM_TYPE" | "UNKNOWN_RATE_PLAN" | "CURRENCY_MISMATCH" | "RATE_LIMITED" | "NOTHING_ACCEPTED" | "BATCH_NOT_FOUND" | "IDEMPOTENCY_KEY_INVALID" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "STAY_INVALID" | "UNKNOWN_ROOM_TYPE_FOR_PLAN" | "OCCUPANCY_EXCEEDED" | "NO_AVAILABILITY" | "EXTERNAL_REFERENCE_REUSED" | "PAYMENT_NOT_ALLOWED" | "PAYMENT_EXCEEDS_TOTAL" | "TAXES_NOT_CONFIGURED" | "TAXES_INSIDE_RATES" | "BOOKING_NOT_FOUND" | "BOOKING_NOT_CANCELLABLE" | "MODULE_NOT_ENTITLED" | "SANDBOX_ONLY" | "ROOM_TYPE_NOT_FOUND" | "RATE_PLAN_NOT_FOUND" | "CATALOG_CONFLICT" | "CATALOG_BUSY" | "CHANNEL_MANAGER_ERROR" | "WEBHOOK_ENDPOINT_NOT_FOUND" | "WEBHOOK_DELIVERY_NOT_FOUND" | "WEBHOOK_ENDPOINT_LIMIT" | "WEBHOOK_ENDPOINT_NOT_ACTIVE" | "WEBHOOK_ENDPOINT_SUSPENDED" | "WEBHOOK_PAYLOAD_EXPIRED" | "WEBHOOK_ACCESS_ENDED" | "WEBHOOKS_UNAVAILABLE" | "PROPERTY_REQUIRED" | "PROPERTY_NOT_FOUND" | "ARI_NOT_AUTHORITATIVE" | "ROUTE_NOT_FOUND" | "PAYLOAD_TOO_LARGE" | "AUTH_BACKEND_UNAVAILABLE" | "BOOKING_NOT_MODIFIABLE" | "SANDBOX_NOT_FOUND" | "SANDBOX_INCOMPLETE" | "WRITES_FROZEN" | "WRITES_SUSPENDED" | "SHIELD_UNAVAILABLE" | "CATALOG_LIMIT_REACHED" | "TOO_MANY_NEW_ENTITIES" | "RATE_OUT_OF_BAND" | "CHANNEL_NOT_FOUND" | "CHANNEL_SHARED" | "MODIFIER_OUT_OF_BAND" | "COMPANY_KEY_REQUIRED" | "BILLING_SETUP_REQUIRED" | "OWNER_HAS_ACCOUNT" | "SANDBOX_LIMIT" | "CONFIRMATION_MISMATCH" | "PROPERTY_NOT_REMOVABLE" | "PROPERTY_BUSY" | "PRICE_UNAVAILABLE" | "CONNECT_LINK_NOT_FOUND" | "CONNECT_LINKS_UNAVAILABLE" | "CHANNEL_NOT_AVAILABLE" | "LIVE_KEY_REQUIRED" | "NOT_READY" | "KEY_NOT_FOUND" | "KEY_LIMIT" | "KEY_REVOKED" | "KEY_ALREADY_ROTATING" | "SCOPES_INVALID" | "ALLOWED_CIDRS_INVALID" | "REASON_REQUIRED" | "SUPPORT_TICKET_NOT_FOUND" | "SUPPORT_TICKET_CLOSED";
+    code: "API_KEY_INVALID" | "API_KEY_REVOKED" | "API_KEY_EXPIRED" | "CONNECT_API_NOT_CONFIGURED" | "IP_NOT_ALLOWED" | "SCOPE_MISSING" | "PROPERTY_UNAVAILABLE" | "CHANNEL_MANAGER_DISABLED" | "PMS_NOT_AVAILABLE" | "VALIDATION" | "RANGE_INVALID" | "HORIZON" | "TOO_MANY_UPDATES" | "TOO_MANY_CELLS" | "UNKNOWN_ROOM_TYPE" | "UNKNOWN_RATE_PLAN" | "CURRENCY_MISMATCH" | "RATE_LIMITED" | "NOTHING_ACCEPTED" | "BATCH_NOT_FOUND" | "IDEMPOTENCY_KEY_INVALID" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "STAY_INVALID" | "UNKNOWN_ROOM_TYPE_FOR_PLAN" | "OCCUPANCY_EXCEEDED" | "NO_AVAILABILITY" | "EXTERNAL_REFERENCE_REUSED" | "PAYMENT_NOT_ALLOWED" | "PAYMENT_EXCEEDS_TOTAL" | "TAXES_NOT_CONFIGURED" | "TAXES_INSIDE_RATES" | "BOOKING_NOT_FOUND" | "BOOKING_NOT_CANCELLABLE" | "MODULE_NOT_ENTITLED" | "SANDBOX_ONLY" | "ROOM_TYPE_NOT_FOUND" | "RATE_PLAN_NOT_FOUND" | "CATALOG_CONFLICT" | "CATALOG_BUSY" | "CHANNEL_MANAGER_ERROR" | "WEBHOOK_ENDPOINT_NOT_FOUND" | "WEBHOOK_DELIVERY_NOT_FOUND" | "WEBHOOK_ENDPOINT_LIMIT" | "WEBHOOK_ENDPOINT_NOT_ACTIVE" | "WEBHOOK_ENDPOINT_SUSPENDED" | "WEBHOOK_PAYLOAD_EXPIRED" | "WEBHOOK_ACCESS_ENDED" | "WEBHOOKS_UNAVAILABLE" | "PROPERTY_REQUIRED" | "PROPERTY_NOT_FOUND" | "ARI_NOT_AUTHORITATIVE" | "ROUTE_NOT_FOUND" | "PAYLOAD_TOO_LARGE" | "AUTH_BACKEND_UNAVAILABLE" | "BOOKING_NOT_MODIFIABLE" | "SANDBOX_NOT_FOUND" | "SANDBOX_INCOMPLETE" | "WRITES_FROZEN" | "WRITES_SUSPENDED" | "SHIELD_UNAVAILABLE" | "CATALOG_LIMIT_REACHED" | "TOO_MANY_NEW_ENTITIES" | "RATE_OUT_OF_BAND" | "CHANNEL_NOT_FOUND" | "CHANNEL_SHARED" | "MODIFIER_OUT_OF_BAND" | "COMPANY_KEY_REQUIRED" | "BILLING_SETUP_REQUIRED" | "OWNER_HAS_ACCOUNT" | "SANDBOX_LIMIT" | "CONFIRMATION_MISMATCH" | "PROPERTY_NOT_REMOVABLE" | "PROPERTY_NOT_CHANGEABLE" | "PROPERTY_BUSY" | "PRICE_UNAVAILABLE" | "CONNECT_LINK_NOT_FOUND" | "CONNECT_LINKS_UNAVAILABLE" | "CHANNEL_NOT_AVAILABLE" | "LIVE_KEY_REQUIRED" | "NOT_READY" | "KEY_NOT_FOUND" | "KEY_LIMIT" | "KEY_REVOKED" | "KEY_ALREADY_ROTATING" | "SCOPES_INVALID" | "ALLOWED_CIDRS_INVALID" | "REASON_REQUIRED" | "SUPPORT_TICKET_NOT_FOUND" | "SUPPORT_TICKET_CLOSED";
     details?: unknown;
   };
 }
@@ -484,7 +485,7 @@ export interface Catalog {
     /** The occupancy this plan is priced for; null = any */
     occupancy: number | null;
     currency: string;
-    /** The plan's standing price in major units, as a decimal string with the currency's own decimals ("4500.50"): the same field PUT /catalog/rate-plans takes. null = it follows the room type's base rate */
+    /** The plan's standing price in major units, as a decimal string with the currency's own decimals ("4500.50"): the same field PUT /catalog/rate-plans takes, and the price every date of the plan opens for booking at. null = it follows the room type's base rate, which only a plan made on the hotel's own screens can do */
     defaultRate?: string | null;
     /** false = a non-refundable plan */
     refundable: boolean;
@@ -557,7 +558,7 @@ export interface PropertyCreated {
   name: string;
   timezone: string;
   currency: string;
-  /** The property publishes to its channels. false for a new hotel until your first PUT /catalog/room-types puts it on the channel manager; always true for a sandbox */
+  /** The property publishes to its channels. A new hotel is put on the channel manager when its billing starts, usually before this answer; while it is false, PUT /catalog/room-types with the same refs tries again. Always true for a sandbox */
   channelManager: boolean;
   /** true when a test key made it: everything lands locally, nothing reaches a channel and nothing is billed */
   sandbox: boolean;
@@ -571,6 +572,43 @@ export interface PropertyCreated {
   };
   /** true: an earlier request with this X-Idempotency-Key already added this hotel; nothing new was made */
   replay: boolean;
+}
+
+export interface PropertyChange {
+  /** The hotel's new name, as its guests know it. A sandbox's name keeps its ending, (sandbox) */
+  name?: string;
+  /** Only the parts you send change. The country is not one of them: it never changes by this request */
+  address?: {
+    /** The first line of the address */
+    line1?: string;
+    city?: string;
+    /** An empty string clears it */
+    state?: string;
+    /** An empty string clears it */
+    postalCode?: string;
+  };
+}
+
+export interface PropertyChanged {
+  id: number;
+  /** As stored now. A sandbox's name ends in (sandbox) */
+  name: string;
+  timezone: string;
+  currency: string;
+  /** The property publishes to its channels. Not changed by this request */
+  channelManager: boolean;
+  sandbox: boolean;
+  /** The hotel's address as stored now. A part the record does not hold is null */
+  address: {
+    line1: string | null;
+    city: string | null;
+    state: string | null;
+    postalCode: string | null;
+    /** ISO 3166-1 alpha-2. Never changed by this request */
+    country: string | null;
+  };
+  /** The fields whose stored value this request changed, by the names you send (name, address.line1, address.city, address.state, address.postalCode). Empty when everything you sent was already stored */
+  changed: Array<string>;
 }
 
 export interface PropertyRemoved {
@@ -637,7 +675,7 @@ export interface RatePlansUpsert {
     occupancy?: number | null;
     /** false = a non-refundable plan; default true */
     refundable?: boolean;
-    /** The plan's standing price in MAJOR units, a number or a decimal string (4500 or "4500.50"), like every rate here: what new dates open at, mirrored to the channel manager. Kept to the currency's own decimals (§2.10). Omit to leave it; null = follow the room type's base rate */
+    /** The plan's standing price in MAJOR units, a number or a decimal string (4500 or "4500.50"), like every rate here: what every date of the plan opens for booking at, mirrored to the channel manager. REQUIRED when the plan is new: a request that would create a plan without it is 400 VALIDATION and writes nothing. On a plan you already sent, omit it to leave the price as it is. null (follow the room type's base rate) is accepted only where the hotel has typed a base rate in ZimmerStack, and is 400 VALIDATION otherwise. Kept to the currency's own decimals (§2.10) */
     defaultRate?: number | string | null;
     /** Deprecated: the same standing price in hundredths of the major unit (450050 is 4500.50). Send defaultRate instead; never both */
     defaultRateMinor?: number | null;
@@ -751,7 +789,7 @@ export interface RatesWrite {
     /** Hotel-local calendar date, YYYY-MM-DD */
     dateTo: string;
     days?: Array<"mo" | "tu" | "we" | "th" | "fr" | "sa" | "su">;
-    /** Nightly sell price in MAJOR units, a number or a decimal string (4500, 4500.5 or "4500.50"), 1 to 21474836. Kept exactly, to the currency's own decimals (GET /property decimals): two for rupees, euros and dollars, none for yen. A price with more decimals than the currency has, a number or a decimal string alike, is rounded to them and named in the answer's rounded list */
+    /** Nightly sell price in MAJOR units, a number or a decimal string (4500, 4500.5 or "4500.50"), 1 to 21474836. Kept exactly, to the currency's own decimals (GET /property decimals): two for rupees, euros and dollars, none for yen. A number with more decimals than the currency has is rounded to them and named in the answer's rounded list; so is a fraction in a currency that has none. A decimal string takes at most two decimals: one with more is refused (400 VALIDATION) */
     rate: number | string;
     /** ISO 4217; must equal the property's currency (GET /property) */
     currency: string;
@@ -1937,7 +1975,7 @@ export interface WebhookDeliveryDetail {
   payloadBytes: number;
   /** false once the stored body has been dropped (14 days); a redeliver rebuilds it from the event while that is kept (90 days) */
   payloadAvailable: boolean;
-  /** The event as it was sent (the webhook's envelope); null once the stored body has been dropped (payloadAvailable: false) */
+  /** The event as it was sent (the webhook's envelope), with a guest's phone and email masked in this read; null once the stored body has been dropped (payloadAvailable: false) */
   payload: unknown;
   /** Every attempt, oldest first */
   attempts_log: Array<{
@@ -2918,7 +2956,7 @@ export interface ConnectLinkCreated {
   };
   /** The address to send to the hotel's own person. It opens ONCE and is in this answer only: we keep a hash of its token, never the token. null on a replay of the same request (X-Idempotent-Replay: true): we keep no copy to show again, so make a new link if the first answer was lost (it withdraws this one) */
   url: string | null;
-  /** What the hotel does at the booking site before it opens the link, naming our connectivity partner as that booking site lists it. For your own screen or message to the hotel; null where there is no such step */
+  /** What the hotel does at the booking site before it opens the link (in its extranet or through its support), naming our connectivity partner as that booking site lists it. Send it to the hotel first, and the url once the hotel has done it; null where there is no such step (Airbnb) */
   hotelStep: string | null;
   /** Earlier links for this hotel and booking site that nobody had opened, withdrawn by this one */
   withdrawn: number;
@@ -3680,6 +3718,8 @@ export interface Operations {
   "GET /properties": { path: undefined; query: undefined; body: undefined; response: Properties };
   /** Add a hotel (a software partner's company key) */
   "POST /properties": { path: undefined; query: undefined; body: PropertyCreate; response: PropertyCreated };
+  /** Change a hotel */
+  "PATCH /properties/{propertyId}": { path: { propertyId: string | number }; query: undefined; body: PropertyChange; response: PropertyChanged };
   /** Remove a hotel you added (a software partner's company key) */
   "DELETE /properties/{propertyId}": { path: { propertyId: string | number }; query: { confirm: string }; body: undefined; response: PropertyRemoved };
   /** The property this key is for */
@@ -3764,7 +3804,7 @@ export interface Operations {
   "POST /webhook-endpoints/{endpointId}/recover": { path: { endpointId: string | number }; query: undefined; body: WebhookRecover; response: WebhookRecoverResult };
   /** The delivery log, newest first */
   "GET /webhook-endpoints/{endpointId}/deliveries": { path: { endpointId: string | number }; query: { status?: "PENDING" | "DELIVERED" | "FAILED"; eventType?: string; mode?: "LIVE" | "TEST"; from?: string; to?: string; cursor?: string; limit?: number }; body: undefined; response: WebhookDeliveryList };
-  /** One delivery: the body as sent, and every attempt */
+  /** One delivery: the body as sent, guest contact masked, and every attempt */
   "GET /webhook-endpoints/{endpointId}/deliveries/{deliveryId}": { path: { endpointId: string | number; deliveryId: string | number }; query: undefined; body: undefined; response: WebhookDeliveryDetail };
   /** Send one delivery again */
   "POST /webhook-endpoints/{endpointId}/deliveries/{deliveryId}/redeliver": { path: { endpointId: string | number; deliveryId: string | number }; query: undefined; body: undefined; response: WebhookDelivery };
@@ -3835,6 +3875,7 @@ export type OperationKey = keyof Operations;
 export const OPERATIONS: Record<OperationKey, { idempotent: boolean; bodyRequired: boolean }> = {
   "GET /properties": { idempotent: false, bodyRequired: false },
   "POST /properties": { idempotent: true, bodyRequired: true },
+  "PATCH /properties/{propertyId}": { idempotent: true, bodyRequired: true },
   "DELETE /properties/{propertyId}": { idempotent: false, bodyRequired: false },
   "GET /property": { idempotent: false, bodyRequired: false },
   "GET /limits": { idempotent: false, bodyRequired: false },

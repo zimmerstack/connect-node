@@ -3,7 +3,7 @@
 // What the package's MCP server (src/mcp) answers lookups from. It is not part of the client's own exports.
 
 /** The rules file this package ships (AGENTS.md), for the zimmerstack_rules tool. */
-export const RULES: string = "# Building on @zimmerstack/connect: rules for coding agents\n\nYou are writing code that calls the ZimmerStack Connect API through its official package. A write\nthrough it changes a real hotel's prices and rooms on every booking site it sells on. The package\nenforces most of the API's rules for you; this file is the rest. Keep it in the repository (as\nAGENTS.md or CLAUDE.md) and follow it. The whole API reference, in one file an agent can read:\nhttps://docs.zimmerstack.com/llms-full.txt\n\n## The key\n\n- It lives in the environment variable `ZIMMERSTACK_CONNECT_KEY` on a server. Never write it into a\n  file that is committed, a log line, an error message, a URL, a test fixture or anything a browser\n  or a mobile app receives. Never print it. `new ZimmerStack()` reads it by itself.\n- The package refuses to start in a browser or in React Native. Do not work around that: the\n  person's own frontend calls their own server, and the server calls ZimmerStack. Never put the key in\n  a variable a bundler sends to the browser (`VITE_`, `NEXT_PUBLIC_`, `REACT_APP_`, `EXPO_PUBLIC_`).\n  An app with no server gets the smallest one: https://docs.zimmerstack.com/sdk#no-server. A plain\n  `fetch` from a browser is refused too (\"Failed to fetch\"), on purpose.\n- `zsk_test_…` is a sandbox: nothing reaches a channel. Build and test with it. `zsk_live_…` is a real\n  hotel. The package refuses to WRITE with a live key under a test runner; never switch that off to\n  make a test pass.\n- A software vendor's company key acts on one hotel at a time: `zs.forProperty(propertyId)`\n  (`zs.properties.list()` names them), or `ZIMMERSTACK_PROPERTY_ID` in the environment for an app that\n  serves one hotel. A test company key that reaches one sandbox finds it by itself; with several,\n  name one; a live key never guesses.\n- No key yet: a software company signs up, free, at https://www.zimmerstack.com/partners/pms-companies#join\n  and makes test keys in the partner portal (Developers); a hotel's owner makes one in Admin →\n  Developers → API keys.\n- A key is zsk_live_ (or zsk_test_ on a sandbox) + 40 letters and digits + a 6-character checksum (the CRC32 of everything before it, in base 62), so a key can be told from a look-alike without asking us. Where a person pastes a key (a settings screen, a\n  deploy script), check it with `checkKey(value)` first: it tells a mistyped or cut-short key from a real\n  one without sending it anywhere, and its `message` never contains the key.\n- The key your code runs on is replaced by a person, never by code: no route makes, rotates or revokes\n  a hotel's own key or a company key. Every key can be rotated, company keys included: the new key is shown once and the old one keeps answering for 24 hours, then answers 401 API_KEY_REVOKED. A key reported as found in a public place (for example by GitHub secret scanning in a public repository) is revoked at once and its holder is emailed: requests on it answer 401 API_KEY_REVOKED.\n  So when calls suddenly answer `API_KEY_REVOKED`, do not retry: tell the person to make a new key.\n  (The one thing that is by API: the keys a software partner made on a hotel, below.)\n- When something is wrong, run `npx @zimmerstack/connect doctor` before changing code: it checks the\n  key, the hotels and scopes it reaches, every budget, the last day's refused requests, the webhook\n  endpoints and the sync state, and says what to do about each. It only reads and never prints the key.\n\n## Let the package pace; never work around it\n\n- It reads every budget in the `RateLimit` headers and slows down before one runs out, and sends one\n  hotel's writes one at a time, in order. It sends a request again only when that is safe: a 429\n  always, after its `Retry-After`; a 5xx or a network failure only for a read, or for a write that\n  carries an idempotency key (a delete carries none, and is never sent twice). Anything else is a\n  `ZimmerStackError` at once. Do not wrap its calls in your own retry loop, and never resend a 4xx\n  other than 429: it is a verdict on the request. Fix the request.\n- Per minute: 120 requests and 30 writes per key; 300 and 60 for all of a hotel's keys together.\n  A write is every call that is not a read. A hotel also has budgets per hour and per day that count\n  CHANGED cells (at least 10,000 an hour, 30,000\n  a day). Hitting one is `error.code === \"RATE_LIMITED\"` with `error.retryAfterSeconds` and\n  `error.freesAt`: tell the person when to try again; do not sleep through an hour. A job that may wait\n  passes `{ maxWaitSeconds: 3600 }` on the call: the package then holds it and tells `onEvent` when it\n  lands. `zs.limits.get()` answers every budget with what is left of it.\n- One instance per process (`new ZimmerStack()` once, in a module). Two instances do not share a pace.\n  Under a company key each hotel (`zs.forProperty(id)`) has its own queue and its own pace: one hotel's\n  budget never holds up another's calls.\n- Never write on a timer, in a loop over all nights, or \"to be safe\". Send what a person changed,\n  when they changed it: `zs.grid.save(edits)` folds nights into ranges and splits a large save.\n- Do not poll faster than every 15 seconds (`zs.batches.wait` already does it right), and stop.\n\n## Every limit, from the API's own table\n\nThe package keeps inside these by itself; they are here so you can size a job. `zs.limits.get()` answers\nthe same rows for your key with what is left of each. \"At least\" is what the smallest hotel gets: a larger\nhotel gets more, and `zs.limits.get()` says exactly.\n\n- `api-address`: 1,200 requests, 60 s fixed, per address, on each API machine.\n- `ip`: 240 requests, 60 s sliding, per address.\n- `ip-auth`: 20 failed authentications, 60 s sliding, per address.\n- `key-auth`: 5 failed authentications, 60 s sliding, per address and key.\n- `global-unauthenticated`: 1,200 requests, 60 s sliding, per everyone without a verified key.\n- `requests`: 120 requests, 60 s sliding, per key.\n- `writes`: 30 writes, 60 s sliding, per key.\n- `property`: 300 requests, 60 s sliding, per property (all its keys).\n- `property-writes`: 60 writes, 60 s sliding, per property (all its keys).\n- `cells`: 20,000 cells, 60 s sliding, per property (all its keys).\n- `company`: 1,200 requests, 60 s sliding, per company key (all its hotels).\n- `global`: 3,000 requests, 60 s sliding, per everyone.\n- `bookings`: 20 bookings, 60 s sliding, per key.\n- `property-bookings`: 40 bookings, 60 s sliding, per property (all its keys).\n- `property-bookings-day`: 500 bookings, rolling 24 hours, per property (all its keys).\n- `direct-cancels`: 10 cancels, 60 s sliding, per key.\n- `property-direct-cancels-day`: 50 cancels, rolling 24 hours, per property (all its keys).\n- `cells-hour`: at least 10,000 changed cells, one clock hour (UTC), per property (all its keys).\n- `cells-day`: at least 30,000 changed cells, rolling 24 hours, per property (all its keys).\n- `vendor-cells-day`: at least 150,000 changed cells, rolling 24 hours, per software vendor (all its hotels).\n- `shield-lane`: at least 500 closing cells, one clock hour (UTC), per property (all its keys).\n- `structure-creates`: 20 new room types and rate plans, 60 s sliding, per property.\n- `structure-creates-day`: 300 new room types and rate plans, rolling 24 hours, per property.\n- `structure-edits-day`: 300 changed room types and rate plans, rolling 24 hours, per property.\n- `structure-deletes-day`: 60 deleted room types and rate plans, rolling 24 hours, per property.\n- `vendor-structure-creates-day`: at least 500 new room types and rate plans, rolling 24 hours, per software vendor (all its hotels).\n- `vendor-remote-properties-day`: 10 hotels, rolling 24 hours, per software vendor.\n- `vendor-property-removals-day`: 10 hotels, rolling 24 hours, per software vendor.\n- `partner-new-properties-hour`: 20 hotels, one hour, per software partner.\n- `partner-new-sandboxes-hour`: 30 sandboxes, rolling hour, per software partner.\n- `connect-links-hour`: 10 connect links, rolling hour, per property.\n- `partner-connect-links-hour`: 120 connect links, rolling hour, per software partner.\n- `modifier-changes-day`: 6 changes, rolling 24 hours, per property.\n- `rate-resends-day`: 3 re-sends, rolling 24 hours, per property.\n- `partner-support-tickets-day`: 20 tickets, rolling 24 hours, per software partner.\n- `partner-support-messages-hour`: 60 messages, rolling hour, per software partner.\n- `maxUpdatesPerRequest`: 1,000 entries, per request.\n- `maxCellsPerRequest`: 5,000 cells, per request.\n- `maxBodyBytes`: 1,048,576 bytes, per request.\n- `horizonDays`: 500 nights, per request.\n- `maxNightsPerBooking`: 90 nights, per request.\n- `newEntitiesPerRequest`: 20 new room types and rate plans, per request.\n- `maxRoomTypes`: 18 room types, per property.\n- `maxRatePlans`: 180 rate plans, per property.\n- `maxActiveKeysPerProperty`: 5 keys, per property.\n- `maxActiveCompanyKeys`: 5 keys, per software partner.\n- `maxSandboxes`: 5 sandboxes, per software partner.\n- `maxAllowedCidrs`: 20 addresses or ranges, per key.\n- `idempotencyRetentionDays`: 7 days, per key.\n- `maxSupportMessageChars`: 5,000 characters, per request.\n- `maxSupportTicketProperties`: 200 hotels, per request.\n\n## Money and dates\n\n- A price is SENT and READ in major units of the hotel's own currency, with that currency's own decimals (ISO 4217: 2 for\n  rupees, euros and dollars, 0 for yen; `decimals` on `GET /property`). Send a number or a decimal string (4500.50 or\n  \"4500.50\"); read `rate` (\"4500.50\") beside `currency` and `decimals`. It is kept exactly: never round a price yourself.\n  `zs.grid.load` gives major units; `zs.grid.save` takes them.\n- `rateMinor` and every other `…Minor` field is HUNDREDTHS of the major unit for every currency (450050 = 4500.50;\n  1500000 = 15000 yen), which is the ISO minor unit only where the currency has two decimals. Prefer `rate`.\n- A price with more decimals than the currency has, a number or a decimal string alike, is rounded and named in\n  the answer's `rounded` list: show that list to the person, never hide it.\n- Never do money arithmetic on floats, and never divide by 100 yourself. The package's helpers work on the\n  strings: `toAmount(value, decimals)`, `addAmounts`, `subtractAmounts`, `multiplyAmount(amount, factor, decimals)`,\n  `compareAmounts`, `formatAmount(amount, { currency, decimals, locale })`. A ledger that stores whole minor\n  units (cents, paise, yen) converts with `amountFromMinorUnits` and `amountToMinorUnits`; an API `…Minor`\n  field becomes the string with `amountFromHundredths(rateMinor, decimals)`. `decimals` always comes from the\n  API's answer, never from a table of your own.\n- A date is a plain `YYYY-MM-DD` calendar day in the hotel's timezone. Never build one with\n  `new Date()` arithmetic in local time; use `eachDate(from, to)`.\n- `stopSell: true` closes ONE rate plan on that night: a switch. The room type's other rate plans keep\n  selling, and so does a rate an OTA derives on its own side. A room count of 0 (`zs.availability.set`)\n  is a COUNT: it closes the room type everywhere, and an OTA cancellation or your next count moves it. To\n  close a room type and keep it closed, do both in one call: `zs.availability.close` (below). Say which\n  of these a button does. Never a zero price.\n- Writes may reach 500 days ahead. A write is accepted (202) when it is in ZimmerStack's record; it\n  reaches the channels in seconds to minutes. `zs.sync.get()` says how far along it is.\n\n## Sent is not held: read what comes back\n\n- A 202 says \"in ZimmerStack's record\", not \"on the booking sites\". Show \"saving\" until\n  `zs.batches.wait(batchId)` reads `landed`. `failed` is not a network error to retry: the channel\n  manager refused a value (`parkedCells`, `lastError`) or the write named a room type or rate plan that\n  reaches no channel (`unreachable`). A refused value is held, not sent again: send a corrected value for\n  those nights. Sending the same value again is refused with the same words.\n- Read every write's answer, not only its status: `rejected` (cells not written, with the reason),\n  `rounded` (prices kept differently from what was sent), `priceWarnings` and `warnings`. Show them to the\n  person who saved.\n- A value that ZimmerStack's record and the channel manager both already hold is dropped as unchanged\n  (`noopCells`): it is not sent again. So sending the same grid twice does no harm, and it does not\n  \"refresh\" the channels either: never resend on a timer to be safe.\n- Someone can change a price or a stay rule on the channel manager's side or in an OTA's extranet. A\n  nightly read finds it: `channel.drift.detected` names the nights (`data.drift.cells`, your value and\n  theirs), your value is sent again unless the hotel switched that repair off, and `channel.drift.healed`\n  follows when a later read agrees. `zs.sync.get()` carries `rates.driftCells`. Show it; never answer it\n  by pushing the whole calendar every night.\n- `channel.sync.alert` says a problem began (`data.sync.event`: a refused value, a disconnect, prices or\n  room counts that stopped going out, a setting changed) and `channel.sync.recovered` that it ended. Show\n  both to the hotel; neither is a reason to resend everything.\n- A night more than a year ahead that your software never wrote is closed on the booking sites. A room\n  count you write for it is sent as written; otherwise it opens by itself when it comes inside the year.\n\n## See what a write will do, and read what it did not do\n\n- Every answer of `zs.availability.set`, `zs.rates.set` and `zs.restrictions.set` may carry `notices`: what\n  the write did NOT do, one sentence each with a stable `code`, a `level` (warning or info) and an\n  `action`. Read them after every save with `noticesOf(accepted)` and show the warnings to the person\n  who saved (`message` and `action`). Branch on `code` (`NOTICES` lists all 19 with what each\n  means); a code you do not know was added later, so show it too. A notice is never an error: the write\n  was accepted.\n- The two that explain most surprises: `ROOM_STILL_ON_SALE` (you stop-sold one rate plan and the room\n  still sells through `otherRatePlanIds`) and `COUNT_ZERO_IS_NOT_STOP_SELL` (a count of 0 is a count, which\n  the next OTA cancellation or your next count moves).\n- `zs.availability.dryRun(updates)`, `zs.rates.dryRun(updates)` and `zs.restrictions.dryRun(updates)` answer\n  what the same `set` WOULD do and write nothing: a `WritePreview` (`dryRun: true`, `verdict`, what would\n  change, what is already held, the notices), never a `WriteAccepted`. Use one before a large or unusual\n  write, or to show a person what a button will do. It spends the minute budgets like the write it\n  previews (one request, one write, the same cells), so it is not a free read of the calendar: never\n  dry-run on a timer or to \"check\" a night. `zs.rates.get` and its siblings are the reads.\n- `zs.availability.close({ roomTypeId, dateFrom, dateTo })` closes one room type on those nights everywhere:\n  its count goes to 0 and stop-sell is switched on for every one of its rate plans. Read `notReached` in\n  the answer: it names what the close could not reach (a rate an OTA links on its own side is closed only\n  by the count). `zs.availability.reopen` undoes exactly that close; pass `available` when your software\n  knows how many rooms are free now. `closeDryRun` and `reopenDryRun` show what each would do. Call\n  close and reopen from a person's action or a rule a person set; never from a loop over all rooms.\n- When a person asks \"why is this night not selling as we sent it\", call\n  `zs.explain.night({ roomTypeId, date })` and show its `summary`: what your software last sent, what\n  ZimmerStack's record holds and who set it, what the channel manager was last seen holding, and any\n  value it refused, in its own words. It reads the channel manager's copy as last seen, never a booking\n  site's own screen; `seenAt: null` means \"never read back\", not \"wrong\". Never loop it over a calendar.\n\n## Bookings and events: the webhook is the nudge, the log is the truth\n\n- Every event of a hotel (an OTA booking arriving, changing, cancelled; a website booking; a channel\n  problem and its end; drift) has a `sequence`, one higher than the hotel's last. The webhook carries it,\n  and `GET /events` lists every event once, in that order, for 90 days.\n- Build the receiver so nothing depends on a delivery: verify it (`verifyWebhook`), answer 2xx at once,\n  then read the log from the place you saved:\n  `for await (const event of zs.events.all({ after: place })) { apply(event); place = event.sequence; }`\n  and save `place` with what you applied, in one transaction. Run the same loop on a schedule (every few\n  minutes is plenty) and after a restart: a missed, repeated or out-of-order delivery then changes nothing.\n- `event.data.booking.version` counts a booking's events (1, 2, 3 …). A copy you hold with a higher\n  version is newer than the event in your hand: do not overwrite it.\n- `onGap` on `zs.events.all` fires when the log no longer holds what follows your place (a first run, or\n  an outage longer than the log keeps): read `zs.channelBookings.all({ since })` and\n  `zs.directBookings.all({ since })`, then carry on from the log.\n- Narrow an event with `isOtaBookingEvent`, `isWebsiteBookingEvent`, `isSyncEvent`, `isDriftEvent`,\n  `isConnectEvent`. A type you do not know is skipped, never an error: new types are added without notice.\n- Two families are about your ACCOUNT, not one hotel: `platform.incident.*` (`isIncidentEvent`) and\n  `support.ticket.*` (`isSupportTicketEvent`). They carry no `property` and no `sequence` and are not in\n  the event log. Check for them BEFORE any code that reads `event.property`; `zs.status.get()` and\n  `zs.supportTickets.get(id)` are the reads behind them.\n- A cancelled room stays in `rooms[]` with `status: \"CANCELLED\"`; `stay` and `occupancy` count the rooms\n  still live. `finance.virtualCard: true` means the OTA pays the hotel with a card it issues: the guest\n  owes the desk nothing for the room. No card number is ever sent.\n\n## Guest contact\n\n- A guest's phone and email are returned by the API until 30 days after checkout. After that guest.phone and guest.email are null and guest.contactWithheld says \"retention\", so you can tell withheld from a booking that never had one. The name, the stay and the money stay.\n  Copy what you need into your own system when the booking arrives; do not plan to read it back later.\n- `guest.contactWithheld` says why `phone` and `email` are null: `\"retention\"` is final, `\"unavailable\"`\n  means ask again. Never treat null as \"the guest gave none\" when it is set.\n- Every read that returned contact is logged (the key, the partner behind it, when, which bookings) and the hotel's owner sees the list. Read contact only where a person needs it.\n- An endpoint receives phone and email only while its owner has guest contact switched on; it can be switched at any time. A partner's company endpoint starts with it off.\n\n## Webhook endpoints by API (a software partner's company key)\n\n- With the scope `webhooks:manage` a company key creates, changes, pauses, resumes, tests and recovers\n  its own company webhook endpoints: `zs.webhookEndpoints.*`. No hotel is named: an endpoint is the\n  partner's. A test key manages test endpoints (your sandboxes' events), a live key live ones.\n- The signing secret is in the answer of `zs.webhookEndpoints.create` and `.rotateSecret`, once. Store it\n  in the server's settings at that moment (never in code, a log or a chat); no call reads it back.\n- Before planned downtime call `zs.webhookEndpoints.pause`: events are held and `resume` sends them, oldest\n  first. After an outage call `zs.webhookEndpoints.recover(id, since)`, or simply read the log.\n- `zs.webhookEndpoints.delete` is for good and takes the delivery log with it: only on a person's action.\n\n## Going live, connect links and a hotel's keys (a software partner's company key)\n\n- A hotel you add (`zs.properties.create`) is live from the start. A hotel that let you in by your vendor\n  code is not: until it is, a call that names it answers `ARI_NOT_AUTHORITATIVE`.\n  `zs.forProperty(id).readiness.get()` answers four checks, each with a sentence and what to do.\n- To send a year first, pass `{ beforeGoLive: true }` on each call: `zs.rates.set(prices, { beforeGoLive: true })`.\n  Prices and stay rules sent this way are stored and wait (the answer says `heldUntilGoLive: true`).\n  A price for every rate plan and night of the year ahead is what the readiness report asks for.\n- ROOM COUNTS ARE NOT SENT AHEAD. Until the hotel is live a room count may only LOWER what is on sale:\n  one at or below what is on sale goes to the booking sites at once (a held count would oversell a\n  room), and one that raises it is refused in the answer's `rejected` list (`NOTHING_ACCEPTED` when\n  nothing else in the request landed), because the hotel's own people may still be running its counts.\n  Do not loop on that refusal and do not try to work around it: send the room counts with\n  `zs.availability.set` right after `goLive` answers.\n- `zs.readiness.goLive()` makes your software the hotel's source of truth. Call it when a person decided\n  to, once `ready` is true. `NOT_READY` lists the checks that did not pass (`err.details`): fix them and\n  call again; never retry it in a loop. Only ZimmerStack support switches a hotel back.\n- Connecting a booking site: `zs.connectLinks.create({ propertyId, channel })` (scope `channels:connect`,\n  a LIVE key: a test key is refused) answers a one-time `url` for the hotel's own person, who signs in\n  to the booking site and confirms every room and rate match on ZimmerStack's page. Never ask a hotel for\n  a booking site's password, never store one, and never build a screen that takes one: no call accepts it.\n  Listen for `channel.connect.completed` and `channel.connect.expired` (match on `data.connect.linkId`).\n- `zs.hotelKeys.list`, `.create`, `.rotate` and `.revoke` (scope `keys:manage`) manage the keys you made on\n  a hotel you added; never a company key, never the hotel's own. A rotation makes a new key with the same name, scopes, addresses and expiry; the old one keeps answering for 24 hours (retireAt), then stops.\n- A VALUE SHOWN ONCE is in one answer and nowhere else: the `key` of `zs.hotelKeys.create` and `.rotate`,\n  the `url` of `zs.connectLinks.create`, the `secret` of `zs.webhookEndpoints.create` and `.rotateSecret`.\n  Take it with `shownOnce(answer)` and put it in the server's secret store in the same step. It is null\n  on a retry of the same request: `shownOnce` then throws `ZimmerStackShownOnceError`, whose `nextStep`\n  names the call that gets a new one. Never write code that stores `answer.key ?? \"\"`. Log\n  `withoutShownOnce(answer)`, never the answer itself.\n\n## Billing, support and status (a software partner's company key)\n\n- `zs.billing.get()`, `.invoices()` and `.nextInvoice()` (scope `billing:read`) READ what the partner\n  portal's Billing page shows. Nothing pays or changes anything by API. Amounts are decimal strings in\n  major units beside `…Minor`: use the money helpers, and never add amounts of two currencies.\n- `atCost` on `zs.billing.get()` lists what the channel manager charged above its included room types and\n  rate plans, passed on at cost. An item with `status: \"RECORDED\"` is on no invoice yet: show it as\n  recorded, never as billed.\n- `zs.supportTickets.create({ severity, subject, message, propertyIds })` (scope `support:write`) opens a\n  ticket; ZimmerStack attaches what its own records show. The level follows from the hotels you name: many_hotels needs two or more propertyIds or allProperties true; one_hotel needs exactly one; question takes any or none.\n  Open one from a person's action or from one alert, never from a loop, and never put a key, a secret or\n  a guest's details in the message.\n- Before blaming your own code for a failure across hotels, read `zs.status.get()`: the open incidents\n  that touch your hotels. During one, keep what people changed and send it when it is resolved; do not\n  resend everything.\n\n## Room types and rate plans\n\n- A hotel sells room types (\"Deluxe Room\") through rate plans (\"Bed and breakfast\"). Create or change\n  one with `zs.roomTypes.save({ ref, name, roomCount, adults })` and\n  `zs.ratePlans.save({ ref, roomTypeRef, name, mealPlan, defaultRate })`. `ref` is the person's own\n  id for it: sending the same ref again changes that entity, it never makes a second one. Several in\n  one request: `zs.catalog.upsertRoomTypes` and `zs.catalog.upsertRatePlans`. All need the scope\n  `catalog:write`.\n- Every later write names ZimmerStack's numeric `id`, not the ref: room counts name a room type's\n  id, prices and stay rules name a rate plan's id. `zs.roomTypes.list()` and `zs.ratePlans.list()`\n  give them, and so does the answer of each `save`.\n- `zs.roomTypes.delete(idOrRef)` and `zs.ratePlans.delete(idOrRef)` delete for good, and a room\n  type takes its rate plans with it. Call them only when a person chose to delete that one entity on\n  a screen, after a confirmation that names it. Never from a loop, a sync job, a \"reset\" or a cleanup\n  script, and never to repair a mismatch: send the entity again with `save` instead. A hotel may\n  delete 60 entities a day.\n- `CATALOG_CONFLICT` or `CHANNEL_MANAGER_ERROR` on a delete means the hotel still uses it: a\n  booking site still sells it, an upcoming stay holds one of its rooms, or rooms are still assigned\n  to the room type. Nothing was deleted. Show the message and stop; do not try another way round.\n\n## Adding and removing a hotel (a software partner's company key)\n\n- Only a COMPANY key with the scope `properties:write` can do either; a hotel's own key cannot\n  (`COMPANY_KEY_REQUIRED`). The person ticks \"Also add and remove hotels\" when making the key in the\n  partner portal; only the account's owner or an Admin is offered that tick box. Neither call names a\n  hotel with `forProperty`.\n- `zs.properties.create({ name, owner, address, roomTypes })` adds a hotel and answers with its `id`:\n  act on it with `zs.forProperty(id)`. The owner gets the sign-in details by email, never the caller.\n  It joins the partner's monthly invoice. With a `zsk_test_` key the same call makes a sandbox, which\n  is never billed. A partner may add 20 hotels an hour.\n- After adding: the hotel is not on the channel manager yet. The first `zs.roomTypes.save` (or\n  `zs.catalog.upsertRoomTypes`) with the same refs puts it there; then the rate plans, then room\n  counts and prices.\n- `zs.properties.delete(propertyId, { confirm })` (also `zs.properties.remove`) removes a hotel the\n  partner added, FOR GOOD: its booking sites are disconnected, its rate plans and then its room types\n  are removed from the channel manager, the hotel is closed and it comes off the invoice from the next\n  1st. `confirm` is the hotel's exact name from `zs.properties.list()`. There is no undo, and a\n  removed hotel cannot be added again by API.\n- Call `delete` only when a person chose to remove that one hotel on a screen, after typing or\n  confirming its name. Never from a loop, a timer, a sync job, a \"reset\", a cleanup or a test against\n  a live key, and never to fix a hotel that looks wrong. A partner may remove\n  10 hotels a day.\n- The answer's `channelManager.state` is `REMOVED`, or `RETRYING` when one step is still finishing:\n  that is success, ZimmerStack retries it, do not call again in a loop. `PROPERTY_NOT_REMOVABLE` means\n  this key may not remove that hotel (its owner let the partner in, or it uses more than the channel\n  manager): show the message and stop.\n- Both calls take longer than the others (a removal disconnects the booking sites one after another),\n  so the client waits up to 95 seconds for them whatever `timeoutMs` is. If `delete` ends in\n  `TIMEOUT` or `NETWORK_ERROR`, the person may press Remove again: a hotel already gone answers\n  `replay: true`, one still being removed answers `PROPERTY_BUSY`. Never retry it in a loop.\n\n## A channel's price modifier\n\n- `zs.channels.setModifier(channelId, steps)` moves EVERY price sent to that channel from then on.\n  Call it only when a person saved that setting on a screen. Never from a loop, a timer, a seed\n  script or a test against a live key. A hotel may change modifiers 6 times a day.\n- Saving a modifier makes the channel manager send that channel every date again, so prices already on the channel move to the new rule within minutes.\n  Show that sentence where the person saves (`MODIFIER_TAKES_EFFECT`), and offer\n  `zs.rates.resend()` as a separate, deliberate button (\"Apply to nights already on sale\"): 3 a day\n  per hotel, never automatic.\n- Keep the grid on the price before any modifier; show a channel's price beside it with\n  `channelPrice(rate, steps)`.\n\n## Website bookings: apply them before you push room counts\n\n- When the hotel also sells on its own website through ZimmerStack's booking engine, those bookings\n  reach you as the webhooks `direct.booking.created`, `direct.booking.modified` and\n  `direct.booking.cancelled` (the endpoint receives each only when it lists that type) and by\n  `zs.directBookings.all({ since })` (scope `direct-bookings:read`). They are not OTA bookings:\n  `isWebsiteBookingEvent(event)` tells them apart, `channel.otaName` is `\"Website\"` and `finance` is null.\n- `direct.booking.modified` is a no-show and its undo, nothing else yet: the hotel recorded that the guest\n  did not arrive, or undid that. It is NOT a cancellation: `status` stays CONFIRMED and the payment is\n  untouched, so never refund on it. Read `stayStatus` and each room's `status`: NOSHOW gives the nights\n  back (they are on sale again on every channel), UPCOMING again holds them. `changes` names what moved\n  (`\"stayStatus\"`, `\"rooms[0].status\"`); `previous` is the booking as it read before, `stayStatus`\n  included. On a sandbox, `zs.sandbox.bookings.noShow(bookingId)` makes the real event for a booking\n  simulated with `otaName: \"Website\"`, and `{ undo: true }` its undo.\n- A website booking takes one room off the count the channels hold, at once. A PMS that pushes absolute\n  room counts must apply the booking to its own calendar BEFORE its next `zs.availability.set` or\n  `zs.grid.save`, or that push puts the sold room back on sale. Read `zs.directBookings.all` before a\n  full push. Nothing on our side stops the count from going up.\n- `zs.directBookings.cancel(bookingId, { refund, reason })` cancels a whole website booking that is\n  still UPCOMING, and moves the guest's money (scope `direct-bookings:cancel`, granted on its own).\n  `refund` is `\"policy\"` (the default: what the booking's own cancellation policy gives back, as if the\n  guest cancelled), `\"full\"` (everything paid online: the hotel is at fault, an overbooking) or\n  `\"none\"` (the hotel settles the money itself). Call it only from a person's own cancel button, with\n  the refund they chose on the screen; never from a loop, a sync job or a test against a live key.\n  Show `refund.amount` and `refund.status` from the answer. `BOOKING_NOT_CANCELLABLE` (checked in,\n  checked out, a no-show) goes to the hotel's desk; do not retry it. `replay: true` means it was\n  already cancelled and no money moved. Your own cancel comes back as `direct.booking.cancelled`\n  (\"Cancelled by the hotel\"): match it on the booking id and treat it as already applied.\n\n## Errors\n\n```ts\nimport { ZimmerStack, ZimmerStackError } from \"@zimmerstack/connect\";\n\ntry {\n  await zs.rates.set(updates);\n} catch (err) {\n  if (err instanceof ZimmerStackError) {\n    // err.code is stable (RATE_LIMITED, RATE_OUT_OF_BAND, SCOPE_MISSING, …); err.message is for people.\n    // Show err.message to the person; branch on err.code; never retry unless err.retryable.\n  }\n  throw err;\n}\n```\n\n- `SCOPE_MISSING`: the key was not given that permission. Say which one is missing; the hotel's\n  owner grants it (Admin → Developers → API keys). Do not look for another route.\n- `API_KEY_INVALID`, `API_KEY_REVOKED`, `API_KEY_EXPIRED`: stop. The client refuses every later call\n  by itself; repeated bad calls get the server's address refused.\n- `RATE_OUT_OF_BAND`, `MODIFIER_OUT_OF_BAND`: the value is outside what the hotel allows. It is a\n  guard against a typing slip; show the message, never split the change into smaller steps to pass.\n\n## The MCP server\n\nThe package carries an MCP server for you, the agent: `npx -y @zimmerstack/connect mcp`. If it is\nconnected, use it instead of guessing: `zimmerstack_reference` looks up any operation, type, limit\nor error code from the API's own contract, and `zimmerstack_sandbox_read` /\n`zimmerstack_sandbox_write` make one call on the sandbox so you can see real ids and try a body\nbefore you write the code that sends it. `zimmerstack_doctor` says what is wrong when a call is\nrefused or a webhook does not arrive; `zimmerstack_sandbox_limits` prints every budget and how full it\nis; `zimmerstack_sandbox_simulate` makes a real booking or channel event of any type on the sandbox, and\n`zimmerstack_sandbox_events` reads the ordered log, so a receiver and its catch-up can be tried end to\nend. `zimmerstack_sandbox_dry_run` shows what a write would do with nothing written, and its notices;\n`zimmerstack_sandbox_explain` tells one night's whole story; `zimmerstack_sandbox_close` closes or reopens\na room type everywhere; `zimmerstack_sandbox_fault` makes the sandbox's pretend channel refuse, throttle\nor go down, so the code that handles a refused value or an outage can be tried before a live hotel meets\none (in your own tests: `zs.sandbox.faults.set` and `.clear`). It works with a `zsk_test_` key only and refuses a live one. It is for building; the application\nyou write calls the API through the client, never through these tools.\n\n## Before you call the work done\n\n- [ ] The key is read from the environment, on a server, and appears in no committed file or log.\n- [ ] Every screen that writes sends only what the person changed, once, on their action.\n- [ ] No retry loop, no timer and no polling faster than 15 seconds around a call of this package.\n- [ ] Errors show `err.message` to the person and branch on `err.code`.\n- [ ] Tests run against a `zsk_test_` key or a fake `fetch`; none needs a live key.\n- [ ] Where a modifier is saved, the screen says when it takes effect, and the re-send is its own button.\n- [ ] A PMS that pushes room counts applies every website booking to its own calendar before it pushes.\n- [ ] A website booking is cancelled only from a person's own action, with the refund they chose.\n- [ ] A room type or a rate plan is deleted only from a person's own action, after a confirmation that names it.\n- [ ] The webhook receiver saves its place in the event log and catches up from it; nothing depends on a delivery arriving, or arriving in order.\n- [ ] A write's answer is read: `rejected`, `rounded` and a batch that reads `failed` reach the person who saved.\n- [ ] Money is handled as the API's decimal strings with the package's helpers; nothing divides by 100.\n- [ ] Guest contact the application needs is copied when the booking arrives, and `contactWithheld` is handled.\n- [ ] After every save of prices, room counts or stay rules, the notices (`noticesOf`) reach the person who saved.\n- [ ] A button that closes a night says what it closes: one rate plan (stop-sell), the room's count (0), or both (`zs.availability.close`).\n- [ ] A value shown once (a key, a connect link, a webhook secret) is taken with `shownOnce`, stored at once, and never logged.\n- [ ] Code that reads `event.property` runs only after the event is known not to be an incident or a support-ticket event.\n- [ ] No screen asks for, and no code stores, a booking site's password.\n- [ ] `npx @zimmerstack/connect doctor` reports nothing that needs attention.\n";
+export const RULES: string = "# Building on @zimmerstack/connect: rules for coding agents\n\nYou are writing code that calls the ZimmerStack Connect API through its official package. A write\nthrough it changes a real hotel's prices and rooms on every booking site it sells on. The package\nenforces most of the API's rules for you; this file is the rest. Keep it in the repository (as\nAGENTS.md or CLAUDE.md) and follow it. The whole API reference, in one file an agent can read:\nhttps://docs.zimmerstack.com/llms-full.txt\n\n## The key\n\n- It lives in the environment variable `ZIMMERSTACK_CONNECT_KEY` on a server. Never write it into a\n  file that is committed, a log line, an error message, a URL, a test fixture or anything a browser\n  or a mobile app receives. Never print it. `new ZimmerStack()` reads it by itself.\n- The package refuses to start in a browser or in React Native. Do not work around that: the\n  person's own frontend calls their own server, and the server calls ZimmerStack. Never put the key in\n  a variable a bundler sends to the browser (`VITE_`, `NEXT_PUBLIC_`, `REACT_APP_`, `EXPO_PUBLIC_`).\n  An app with no server gets the smallest one: https://docs.zimmerstack.com/guides/node-package#no-server. A plain\n  `fetch` from a browser is refused too (\"Failed to fetch\"), on purpose.\n- `zsk_test_…` is a sandbox: nothing reaches a channel. Build and test with it. `zsk_live_…` is a real\n  hotel. The package refuses to WRITE with a live key under a test runner; never switch that off to\n  make a test pass.\n- A software vendor's company key acts on one hotel at a time: `zs.forProperty(propertyId)`\n  (`zs.properties.list()` names them), or `ZIMMERSTACK_PROPERTY_ID` in the environment for an app that\n  serves one hotel. A test company key that reaches one sandbox finds it by itself; with several,\n  name one; a live key never guesses.\n- No key yet: a software company signs up, free, at https://www.zimmerstack.com/partners/pms-companies#join\n  and makes its test key in the partner portal: Developers → Create company key → Your sandbox\n  (zsk_test_), with \"Also add and remove hotels\" ticked. A hotel's owner makes one in Admin →\n  Developers → API keys.\n- A software company builds in the order a hotel is made, all with that test key: `zs.properties.list()`\n  (the hotels the key reaches), `zs.properties.create(hotel)` (a test hotel in its sandbox, born with its\n  first room type and one room-only rate plan), then on `zs.forProperty(id)`: `roomTypes.save`,\n  `ratePlans.save`, `availability.set` and `rates.set`. The same steps, one page each:\n  https://docs.zimmerstack.com/partner/test-key\n- A key is zsk_live_ (or zsk_test_ on a sandbox) + 40 letters and digits + a 6-character checksum (the CRC32 of everything before it, in base 62), so a key can be told from a look-alike without asking us. Where a person pastes a key (a settings screen, a\n  deploy script), check it with `checkKey(value)` first: it tells a mistyped or cut-short key from a real\n  one without sending it anywhere, and its `message` never contains the key.\n- The key your code runs on is replaced by a person, never by code: no route makes, rotates or revokes\n  a hotel's own key or a company key. Every key can be rotated, company keys included: the new key is shown once and the old one keeps answering for 24 hours, then answers 401 API_KEY_REVOKED. A key reported as found in a public place (for example by GitHub secret scanning in a public repository) is revoked at once and its holder is emailed: requests on it answer 401 API_KEY_REVOKED.\n  So when calls suddenly answer `API_KEY_REVOKED`, do not retry: tell the person to make a new key.\n  (The one thing that is by API: the keys a software partner made on a hotel, below.)\n- When something is wrong, run `npx @zimmerstack/connect doctor` before changing code: it checks the\n  key, the hotels and scopes it reaches, every budget, the last day's refused requests, the webhook\n  endpoints and the sync state, and says what to do about each. It only reads and never prints the key.\n\n## Let the package pace; never work around it\n\n- It reads every budget in the `RateLimit` headers and slows down before one runs out, and sends one\n  hotel's writes one at a time, in order. It sends a request again only when that is safe: a 429\n  always, after its `Retry-After`; a 5xx or a network failure only for a read, or for a write that\n  carries an idempotency key (a delete carries none, and is never sent twice). Anything else is a\n  `ZimmerStackError` at once. Do not wrap its calls in your own retry loop, and never resend a 4xx\n  other than 429: it is a verdict on the request. Fix the request.\n- Per minute: 120 requests and 30 writes per key; 300 and 60 for all of a hotel's keys together.\n  A write is every call that is not a read. A hotel also has budgets per hour and per day that count\n  CHANGED cells (at least 10,000 an hour, 30,000\n  a day). Hitting one is `error.code === \"RATE_LIMITED\"` with `error.retryAfterSeconds` and\n  `error.freesAt`: tell the person when to try again; do not sleep through an hour. A job that may wait\n  passes `{ maxWaitSeconds: 3600 }` on the call: the package then holds it and tells `onEvent` when it\n  lands. `zs.limits.get()` answers every budget with what is left of it.\n- One instance per process (`new ZimmerStack()` once, in a module). Two instances do not share a pace.\n  Under a company key each hotel (`zs.forProperty(id)`) has its own queue and its own pace: one hotel's\n  budget never holds up another's calls.\n- Never write on a timer, in a loop over all nights, or \"to be safe\". Send what a person changed,\n  when they changed it: `zs.grid.save(edits)` folds nights into ranges and splits a large save.\n- Do not poll faster than every 15 seconds (`zs.batches.wait` already does it right), and stop.\n\n## Every limit, from the API's own table\n\nThe package keeps inside these by itself; they are here so you can size a job. `zs.limits.get()` answers\nthe same rows for your key with what is left of each. \"At least\" is what the smallest hotel gets: a larger\nhotel gets more, and `zs.limits.get()` says exactly.\n\n- `api-address`: 1,200 requests, 60 s fixed, per address, on each API machine.\n- `ip`: 240 requests, 60 s sliding, per address.\n- `ip-auth`: 20 failed authentications, 60 s sliding, per address.\n- `key-auth`: 5 failed authentications, 60 s sliding, per address and key.\n- `global-unauthenticated`: 1,200 requests, 60 s sliding, per everyone without a verified key.\n- `requests`: 120 requests, 60 s sliding, per key.\n- `writes`: 30 writes, 60 s sliding, per key.\n- `property`: 300 requests, 60 s sliding, per property (all its keys).\n- `property-writes`: 60 writes, 60 s sliding, per property (all its keys).\n- `cells`: 20,000 cells, 60 s sliding, per property (all its keys).\n- `company`: 1,200 requests, 60 s sliding, per company key (all its hotels).\n- `global`: 3,000 requests, 60 s sliding, per everyone.\n- `bookings`: 20 bookings, 60 s sliding, per key.\n- `property-bookings`: 40 bookings, 60 s sliding, per property (all its keys).\n- `property-bookings-day`: 500 bookings, rolling 24 hours, per property (all its keys).\n- `direct-cancels`: 10 cancels, 60 s sliding, per key.\n- `property-direct-cancels-day`: 50 cancels, rolling 24 hours, per property (all its keys).\n- `cells-hour`: at least 10,000 changed cells, one clock hour (UTC), per property (all its keys).\n- `cells-day`: at least 30,000 changed cells, rolling 24 hours, per property (all its keys).\n- `vendor-cells-day`: at least 150,000 changed cells, rolling 24 hours, per software vendor (all its hotels).\n- `shield-lane`: at least 500 closing cells, one clock hour (UTC), per property (all its keys).\n- `structure-creates`: 20 new room types and rate plans, 60 s sliding, per property.\n- `structure-creates-day`: 300 new room types and rate plans, rolling 24 hours, per property.\n- `structure-edits-day`: 300 changed room types and rate plans, rolling 24 hours, per property.\n- `structure-deletes-day`: 60 deleted room types and rate plans, rolling 24 hours, per property.\n- `vendor-structure-creates-day`: at least 500 new room types and rate plans, rolling 24 hours, per software vendor (all its hotels).\n- `vendor-remote-properties-day`: 10 hotels, rolling 24 hours, per software vendor.\n- `vendor-property-removals-day`: 10 hotels, rolling 24 hours, per software vendor.\n- `partner-new-properties-hour`: 20 hotels, one hour, per software partner.\n- `partner-new-sandboxes-hour`: 30 sandboxes, rolling hour, per software partner.\n- `connect-links-hour`: 10 connect links, rolling hour, per property.\n- `partner-connect-links-hour`: 120 connect links, rolling hour, per software partner.\n- `modifier-changes-day`: 6 changes, rolling 24 hours, per property.\n- `rate-resends-day`: 3 re-sends, rolling 24 hours, per property.\n- `partner-support-tickets-day`: 20 tickets, rolling 24 hours, per software partner.\n- `partner-support-messages-hour`: 60 messages, rolling hour, per software partner.\n- `maxUpdatesPerRequest`: 1,000 entries, per request.\n- `maxCellsPerRequest`: 5,000 cells, per request.\n- `maxBodyBytes`: 1,048,576 bytes, per request.\n- `horizonDays`: 500 nights, per request.\n- `maxNightsPerBooking`: 90 nights, per request.\n- `newEntitiesPerRequest`: 20 new room types and rate plans, per request.\n- `maxRoomTypes`: 18 room types, per property.\n- `maxRatePlans`: 180 rate plans, per property.\n- `maxActiveKeysPerProperty`: 5 keys, per property.\n- `maxActiveCompanyKeys`: 5 keys, per software partner.\n- `maxSandboxes`: 5 sandboxes, per software partner.\n- `maxAllowedCidrs`: 20 addresses or ranges, per key.\n- `idempotencyRetentionDays`: 7 days, per key.\n- `maxSupportMessageChars`: 5,000 characters, per request.\n- `maxSupportTicketProperties`: 200 hotels, per request.\n\n## Money and dates\n\n- A price is SENT and READ in major units of the hotel's own currency, with that currency's own decimals (ISO 4217: 2 for\n  rupees, euros and dollars, 0 for yen; `decimals` on `GET /property`). Send a number or a decimal string (4500.50 or\n  \"4500.50\"); read `rate` (\"4500.50\") beside `currency` and `decimals`. It is kept exactly: never round a price yourself.\n  `zs.grid.load` gives major units; `zs.grid.save` takes them.\n- `rateMinor` and every other `…Minor` field is HUNDREDTHS of the major unit for every currency (450050 = 4500.50;\n  1500000 = 15000 yen), which is the ISO minor unit only where the currency has two decimals. Prefer `rate`.\n- A price sent as a NUMBER with more decimals than the currency has (4500.505 in rupees) is rounded and named in\n  the answer's `rounded` list, and so is a fraction in a currency that has none (15000.5 yen): show that list to\n  the person, never hide it. A price sent as a decimal STRING takes at most two decimals: one with more\n  (\"4500.505\") is refused, 400 `VALIDATION`, and nothing is written. It is never rounded for you.\n- Never do money arithmetic on floats, and never divide by 100 yourself. The package's helpers work on the\n  strings: `toAmount(value, decimals)`, `addAmounts`, `subtractAmounts`, `multiplyAmount(amount, factor, decimals)`,\n  `compareAmounts`, `formatAmount(amount, { currency, decimals, locale })`. A ledger that stores whole minor\n  units (cents, paise, yen) converts with `amountFromMinorUnits` and `amountToMinorUnits`; an API `…Minor`\n  field becomes the string with `amountFromHundredths(rateMinor, decimals)`. `decimals` always comes from the\n  API's answer, never from a table of your own.\n- A date is a plain `YYYY-MM-DD` calendar day in the hotel's timezone. Never build one with\n  `new Date()` arithmetic in local time; use `eachDate(from, to)`.\n- `stopSell: true` closes ONE rate plan on that night: a switch. The room type's other rate plans keep\n  selling, and so does a rate an OTA derives on its own side. A room count of 0 (`zs.availability.set`)\n  is a COUNT: it closes the room type everywhere, and an OTA cancellation or your next count moves it. To\n  close a room type and keep it closed, do both in one call: `zs.availability.close` (below). Say which\n  of these a button does. Never a zero price.\n- Writes may reach 500 days ahead. A write is accepted (202) when it is in ZimmerStack's record; it\n  reaches the channels in seconds to minutes. `zs.sync.get()` says how far along it is.\n\n## Sent is not held: read what comes back\n\n- A 202 says \"in ZimmerStack's record\", not \"on the booking sites\". Show \"saving\" until\n  `zs.batches.wait(batchId)` reads `landed`. `failed` is not a network error to retry: the channel\n  manager refused a value (`parkedCells`, `lastError`) or the write named a room type or rate plan that\n  reaches no channel (`unreachable`). A refused value is held, not sent again: send a corrected value for\n  those nights. Sending the same value again is refused with the same words.\n- Read every write's answer, not only its status: `rejected` (cells not written, with the reason),\n  `rounded` (prices kept differently from what was sent), `priceWarnings` and `warnings`. Show them to the\n  person who saved.\n- A value that ZimmerStack's record and the channel manager both already hold is dropped as unchanged\n  (`noopCells`): it is not sent again. So sending the same grid twice does no harm, and it does not\n  \"refresh\" the channels either: never resend on a timer to be safe.\n- Someone can change a price or a stay rule on the channel manager's side or in an OTA's extranet. A\n  nightly read finds it: `channel.drift.detected` names the nights (`data.drift.cells`, your value and\n  theirs), your value is sent again unless the hotel switched that repair off, and `channel.drift.healed`\n  follows when a later read agrees. `zs.sync.get()` carries `rates.driftCells`. Show it; never answer it\n  by pushing the whole calendar every night.\n- `channel.sync.alert` says a problem began (`data.sync.event`: a refused value, a disconnect, prices or\n  room counts that stopped going out, a setting changed) and `channel.sync.recovered` that it ended. Show\n  both to the hotel; neither is a reason to resend everything.\n- A night more than a year ahead that your software never wrote is closed on the booking sites. A room\n  count you write for it is sent as written; otherwise it opens by itself when it comes inside the year.\n\n## See what a write will do, and read what it did not do\n\n- Every answer of `zs.availability.set`, `zs.rates.set` and `zs.restrictions.set` may carry `notices`: what\n  the write did NOT do, one sentence each with a stable `code`, a `level` (warning or info) and an\n  `action`. Read them after every save with `noticesOf(accepted)` and show the warnings to the person\n  who saved (`message` and `action`). Branch on `code` (`NOTICES` lists all 19 with what each\n  means); a code you do not know was added later, so show it too. A notice is never an error: the write\n  was accepted.\n- The two that explain most surprises: `ROOM_STILL_ON_SALE` (you stop-sold one rate plan and the room\n  still sells through `otherRatePlanIds`) and `COUNT_ZERO_IS_NOT_STOP_SELL` (a count of 0 is a count, which\n  the next OTA cancellation or your next count moves).\n- `zs.availability.dryRun(updates)`, `zs.rates.dryRun(updates)` and `zs.restrictions.dryRun(updates)` answer\n  what the same `set` WOULD do and write nothing: a `WritePreview` (`dryRun: true`, `verdict`, what would\n  change, what is already held, the notices), never a `WriteAccepted`. Use one before a large or unusual\n  write, or to show a person what a button will do. It spends the minute budgets like the write it\n  previews (one request, one write, the same cells), so it is not a free read of the calendar: never\n  dry-run on a timer or to \"check\" a night. `zs.rates.get` and its siblings are the reads.\n- `zs.availability.close({ roomTypeId, dateFrom, dateTo })` closes one room type on those nights everywhere:\n  its count goes to 0 and stop-sell is switched on for every one of its rate plans. Read `notReached` in\n  the answer: it names what the close could not reach (a rate an OTA links on its own side is closed only\n  by the count). `zs.availability.reopen` undoes exactly that close; pass `available` when your software\n  knows how many rooms are free now. `closeDryRun` and `reopenDryRun` show what each would do. Call\n  close and reopen from a person's action or a rule a person set; never from a loop over all rooms.\n- When a person asks \"why is this night not selling as we sent it\", call\n  `zs.explain.night({ roomTypeId, date })` and show its `summary`: what your software last sent, what\n  ZimmerStack's record holds and who set it, what the channel manager was last seen holding, and any\n  value it refused, in its own words. It reads the channel manager's copy as last seen, never a booking\n  site's own screen; `seenAt: null` means \"never read back\", not \"wrong\". Never loop it over a calendar.\n\n## Bookings and events: the webhook is the nudge, the log is the truth\n\n- Every event of a hotel (an OTA booking arriving, changing, cancelled; a website booking; a channel\n  problem and its end; drift) has a `sequence`, one higher than the hotel's last. The webhook carries it,\n  and `GET /events` lists every event once, in that order, for 90 days.\n- Build the receiver so nothing depends on a delivery: verify it (`verifyWebhook`), answer 2xx at once,\n  then read the log from the place you saved:\n  `for await (const event of zs.events.all({ after: place })) { apply(event); place = event.sequence; }`\n  and save `place` with what you applied, in one transaction. Run the same loop on a schedule (every few\n  minutes is plenty) and after a restart: a missed, repeated or out-of-order delivery then changes nothing.\n- `event.data.booking.version` counts a booking's events (1, 2, 3 …). A copy you hold with a higher\n  version is newer than the event in your hand: do not overwrite it.\n- `onGap` on `zs.events.all` fires when the log no longer holds what follows your place (a first run, or\n  an outage longer than the log keeps): read `zs.channelBookings.all({ since })` and\n  `zs.directBookings.all({ since })`, then carry on from the log.\n- Narrow an event with `isOtaBookingEvent`, `isWebsiteBookingEvent`, `isSyncEvent`, `isDriftEvent`,\n  `isConnectEvent`. A type you do not know is skipped, never an error: new types are added without notice.\n- Two families are about your ACCOUNT, not one hotel: `platform.incident.*` (`isIncidentEvent`) and\n  `support.ticket.*` (`isSupportTicketEvent`). They carry no `property` and no `sequence` and are not in\n  the event log. Check for them BEFORE any code that reads `event.property`; `zs.status.get()` and\n  `zs.supportTickets.get(id)` are the reads behind them.\n- A cancelled room stays in `rooms[]` with `status: \"CANCELLED\"`; `stay` and `occupancy` count the rooms\n  still live. `finance.virtualCard: true` means the OTA pays the hotel with a card it issues: the guest\n  owes the desk nothing for the room. No card number is ever sent.\n\n## Guest contact\n\n- A guest's phone and email are returned by the API until 30 days after checkout. After that guest.phone and guest.email are null and guest.contactWithheld says \"retention\", so you can tell withheld from a booking that never had one. The name, the stay and the money stay.\n  Copy what you need into your own system when the booking arrives; do not plan to read it back later.\n- `guest.contactWithheld` says why `phone` and `email` are null: `\"retention\"` is final, `\"unavailable\"`\n  means ask again. Never treat null as \"the guest gave none\" when it is set.\n- Every read that returned contact is logged (the key, the partner behind it, when, which bookings) and the hotel's owner sees the list. Read contact only where a person needs it.\n- An endpoint receives phone and email only while its owner has guest contact switched on; it can be switched at any time. A partner's company endpoint starts with it off.\n\n## Webhook endpoints by API (a software partner's company key)\n\n- With the scope `webhooks:manage` a company key creates, changes, pauses, resumes, tests and recovers\n  its own company webhook endpoints: `zs.webhookEndpoints.*`. No hotel is named: an endpoint is the\n  partner's. A test key manages test endpoints (your sandboxes' events), a live key live ones.\n- The signing secret is in the answer of `zs.webhookEndpoints.create` and `.rotateSecret`, once. Store it\n  in the server's settings at that moment (never in code, a log or a chat); no call reads it back.\n- Before planned downtime call `zs.webhookEndpoints.pause`: events are held and `resume` sends them, oldest\n  first. After an outage call `zs.webhookEndpoints.recover(id, since)`, or simply read the log.\n- `zs.webhookEndpoints.delete` is for good and takes the delivery log with it: only on a person's action.\n\n## Going live, connect links and a hotel's keys (a software partner's company key)\n\n- A hotel you add (`zs.properties.create`) is live from the start. A hotel that let you in by your vendor\n  code is not: until it is, a call that names it answers `ARI_NOT_AUTHORITATIVE`.\n  `zs.forProperty(id).readiness.get()` answers four checks, each with a sentence and what to do.\n- To send a year first, pass `{ beforeGoLive: true }` on each call: `zs.rates.set(prices, { beforeGoLive: true })`.\n  Prices and stay rules sent this way are stored and wait (the answer says `heldUntilGoLive: true`).\n  A price for every rate plan and night of the year ahead is what the readiness report asks for.\n- ROOM COUNTS ARE NOT SENT AHEAD. Until the hotel is live a room count may only LOWER what is on sale:\n  one at or below what is on sale goes to the booking sites at once (a held count would oversell a\n  room), and one that raises it is refused in the answer's `rejected` list (`NOTHING_ACCEPTED` when\n  nothing else in the request landed), because the hotel's own people may still be running its counts.\n  Do not loop on that refusal and do not try to work around it: send the room counts with\n  `zs.availability.set` right after `goLive` answers.\n- `zs.readiness.goLive()` makes your software the hotel's source of truth. Call it when a person decided\n  to, once `ready` is true. `NOT_READY` lists the checks that did not pass (`err.details`): fix them and\n  call again; never retry it in a loop. Only ZimmerStack support switches a hotel back.\n- Connecting a booking site: `zs.connectLinks.create({ propertyId, channel })` (scope `channels:connect`,\n  a LIVE key: a test key is refused) answers a one-time `url` for the hotel's own person, who types the\n  hotel's id at the booking site (MakeMyTrip also its access token) and confirms every room and rate match\n  on ZimmerStack's page. Only Airbnb is connected from the link alone (the host signs in on Airbnb's own\n  page): every other booking site must first accept our connectivity partner for the hotel, in its extranet\n  or through its support. Send `hotelStep` to the hotel first and the `url` once that step is done. Never\n  ask a hotel for a booking site's sign-in, hotel id or token, never store one, and never build a screen\n  that takes one: no call accepts it.\n  Listen for `channel.connect.completed` and `channel.connect.expired` (match on `data.connect.linkId`).\n- `zs.hotelKeys.list`, `.create`, `.rotate` and `.revoke` (scope `keys:manage`) manage the keys you made on\n  a hotel you added; never a company key, never the hotel's own. A rotation makes a new key with the same name, scopes, addresses and expiry; the old one keeps answering for 24 hours (retireAt), then stops.\n- A VALUE SHOWN ONCE is in one answer and nowhere else: the `key` of `zs.hotelKeys.create` and `.rotate`,\n  the `url` of `zs.connectLinks.create`, the `secret` of `zs.webhookEndpoints.create` and `.rotateSecret`.\n  Take it with `shownOnce(answer)` and put it in the server's secret store in the same step. It is null\n  on a retry of the same request: `shownOnce` then throws `ZimmerStackShownOnceError`, whose `nextStep`\n  names the call that gets a new one. Never write code that stores `answer.key ?? \"\"`. Log\n  `withoutShownOnce(answer)`, never the answer itself.\n\n## Billing, support and status (a software partner's company key)\n\n- `zs.billing.get()`, `.invoices()` and `.nextInvoice()` (scope `billing:read`) READ what the partner\n  portal's Billing page shows. Nothing pays or changes anything by API. Amounts are decimal strings in\n  major units beside `…Minor`: use the money helpers, and never add amounts of two currencies.\n- `atCost` on `zs.billing.get()` lists what the channel manager charged above its included room types and\n  rate plans, passed on at cost. An item with `status: \"RECORDED\"` is on no invoice yet: show it as\n  recorded, never as billed.\n- `zs.supportTickets.create({ severity, subject, message, propertyIds })` (scope `support:write`) opens a\n  ticket; ZimmerStack attaches what its own records show. The level follows from the hotels you name: many_hotels needs two or more propertyIds or allProperties true; one_hotel needs exactly one; question takes any or none.\n  Open one from a person's action or from one alert, never from a loop, and never put a key, a secret or\n  a guest's details in the message.\n- Before blaming your own code for a failure across hotels, read `zs.status.get()`: the open incidents\n  that touch your hotels. During one, keep what people changed and send it when it is resolved; do not\n  resend everything.\n\n## Room types and rate plans\n\n- A hotel sells room types (\"Deluxe Room\") through rate plans (\"Bed and breakfast\"). Create or change\n  one with `zs.roomTypes.save({ ref, name, roomCount, adults })` and\n  `zs.ratePlans.save({ ref, roomTypeRef, name, mealPlan, defaultRate })`. `ref` is the person's own\n  id for it: sending the same ref again changes that entity, it never makes a second one. Several in\n  one request: `zs.catalog.upsertRoomTypes` and `zs.catalog.upsertRatePlans`. All need the scope\n  `catalog:write`.\n- A new rate plan needs `defaultRate`, its real price for a night: without it the request is refused\n  (400 `VALIDATION`, `details.refs` names the plans) and nothing in it is saved. Every date of a new\n  plan can be sold at that price until the price of each night is sent, so never write a test number\n  or a made-up one; ask the person for the price. `defaultRate: null` is refused for a plan the\n  integration made.\n- Every later write names ZimmerStack's numeric `id`, not the ref: room counts name a room type's\n  id, prices and stay rules name a rate plan's id. `zs.roomTypes.list()` and `zs.ratePlans.list()`\n  give them, and so does the answer of each `save`.\n- `zs.roomTypes.delete(idOrRef)` and `zs.ratePlans.delete(idOrRef)` delete for good, and a room\n  type takes its rate plans with it. Call them only when a person chose to delete that one entity on\n  a screen, after a confirmation that names it. Never from a loop, a sync job, a \"reset\" or a cleanup\n  script, and never to repair a mismatch: send the entity again with `save` instead. A hotel may\n  delete 60 entities a day.\n- `CATALOG_CONFLICT` or `CHANNEL_MANAGER_ERROR` on a delete means the hotel still uses it: a\n  booking site still sells it, an upcoming stay holds one of its rooms, or rooms are still assigned\n  to the room type. Nothing was deleted. Show the message and stop; do not try another way round.\n\n## Adding, changing and removing a hotel (a software partner's company key)\n\n- Only a COMPANY key with the scope `properties:write` can do any of the three; a hotel's own key\n  cannot (`COMPANY_KEY_REQUIRED`). The person ticks \"Also add and remove hotels\" when making the key in\n  the partner portal; only the account's owner or an Admin is offered that tick box. None of the calls\n  names a hotel with `forProperty`.\n- `zs.properties.create({ name, owner, address, roomTypes })` adds a hotel and answers with its `id`:\n  act on it with `zs.forProperty(id)`. The owner gets the sign-in details by email, never the caller.\n  It joins the partner's monthly invoice. With a `zsk_test_` key the same call makes a sandbox, which\n  is never billed. A partner may add 20 hotels an hour.\n- After adding: a hotel added with its room types is put on the channel manager when its billing\n  starts, usually at once (`channelManager` in the answer says). If a call answers 409\n  CHANNEL_MANAGER_DISABLED, send its room types again with the same refs (`zs.roomTypes.save` or\n  `zs.catalog.upsertRoomTypes`); then the rate plans, then room counts and prices.\n- `zs.properties.update(propertyId, { name, address })` changes the name or the address of a hotel the\n  partner added. Send only what changes: `name`, and under `address` any of `line1`, `city`,\n  `state`, `postalCode`. It never changes the hotel's country, currency, time zone, owner or tax id\n  (sending one is `VALIDATION`), and it changes the hotel's record in ZimmerStack, not the name of its\n  listing on a booking site. The answer's `changed` lists the fields whose stored value moved; empty\n  means everything sent was already stored. `PROPERTY_NOT_CHANGEABLE` means the hotel's owner let the\n  partner in, so the owner changes it: show the message and stop. After a new name, `delete` wants that\n  new name in `confirm`.\n- `zs.properties.delete(propertyId, { confirm })` (also `zs.properties.remove`) removes a hotel the\n  partner added, FOR GOOD: its booking sites are disconnected, its rate plans and then its room types\n  are removed from the channel manager, the hotel is closed and it comes off the invoice from the next\n  1st. `confirm` is the hotel's exact name from `zs.properties.list()`. There is no undo, and a\n  removed hotel cannot be added again by API.\n- Call `delete` only when a person chose to remove that one hotel on a screen, after typing or\n  confirming its name. Never from a loop, a timer, a sync job, a \"reset\", a cleanup or a test against\n  a live key, and never to fix a hotel that looks wrong. A partner may remove\n  10 hotels a day.\n- The answer's `channelManager.state` is `REMOVED`, or `RETRYING` when one step is still finishing:\n  that is success, ZimmerStack retries it, do not call again in a loop. `PROPERTY_NOT_REMOVABLE` means\n  this key may not remove that hotel (its owner let the partner in, or it uses more than the channel\n  manager): show the message and stop.\n- Both calls take longer than the others (a removal disconnects the booking sites one after another),\n  so the client waits up to 95 seconds for them whatever `timeoutMs` is. If `delete` ends in\n  `TIMEOUT` or `NETWORK_ERROR`, the person may press Remove again: a hotel already gone answers\n  `replay: true`, one still being removed answers `PROPERTY_BUSY`. Never retry it in a loop.\n\n## A channel's price modifier\n\n- `zs.channels.setModifier(channelId, steps)` moves EVERY price sent to that channel from then on.\n  Call it only when a person saved that setting on a screen. Never from a loop, a timer, a seed\n  script or a test against a live key. A hotel may change modifiers 6 times a day.\n- Saving a modifier makes the channel manager send that channel every date again, so prices already on the channel move to the new rule within minutes.\n  Show that sentence where the person saves (`MODIFIER_TAKES_EFFECT`), and offer\n  `zs.rates.resend()` as a separate, deliberate button (\"Apply to nights already on sale\"): 3 a day\n  per hotel, never automatic.\n- Keep the grid on the price before any modifier; show a channel's price beside it with\n  `channelPrice(rate, steps)`.\n\n## Website bookings: apply them before you push room counts\n\n- When the hotel also sells on its own website through ZimmerStack's booking engine, those bookings\n  reach you as the webhooks `direct.booking.created`, `direct.booking.modified` and\n  `direct.booking.cancelled` (the endpoint receives each only when it lists that type) and by\n  `zs.directBookings.all({ since })` (scope `direct-bookings:read`). They are not OTA bookings:\n  `isWebsiteBookingEvent(event)` tells them apart, `channel.otaName` is `\"Website\"` and `finance` is null.\n- `direct.booking.modified` is a no-show and its undo, nothing else yet: the hotel recorded that the guest\n  did not arrive, or undid that. It is NOT a cancellation: `status` stays CONFIRMED and the payment is\n  untouched, so never refund on it. Read `stayStatus` and each room's `status`: NOSHOW gives the nights\n  back (they are on sale again on every channel), UPCOMING again holds them. `changes` names what moved\n  (`\"stayStatus\"`, `\"rooms[0].status\"`); `previous` is the booking as it read before, `stayStatus`\n  included. On a sandbox, `zs.sandbox.bookings.noShow(bookingId)` makes the real event for a booking\n  simulated with `otaName: \"Website\"`, and `{ undo: true }` its undo.\n- A website booking takes one room off the count the channels hold, at once. A PMS that pushes absolute\n  room counts must apply the booking to its own calendar BEFORE its next `zs.availability.set` or\n  `zs.grid.save`, or that push puts the sold room back on sale. Read `zs.directBookings.all` before a\n  full push. Nothing on our side stops the count from going up.\n- `zs.directBookings.cancel(bookingId, { refund, reason })` cancels a whole website booking that is\n  still UPCOMING, and moves the guest's money (scope `direct-bookings:cancel`, granted on its own).\n  `refund` is `\"policy\"` (the default: what the booking's own cancellation policy gives back, as if the\n  guest cancelled), `\"full\"` (everything paid online: the hotel is at fault, an overbooking) or\n  `\"none\"` (the hotel settles the money itself). Call it only from a person's own cancel button, with\n  the refund they chose on the screen; never from a loop, a sync job or a test against a live key.\n  Show `refund.amount` and `refund.status` from the answer. `BOOKING_NOT_CANCELLABLE` (checked in,\n  checked out, a no-show) goes to the hotel's desk; do not retry it. `replay: true` means it was\n  already cancelled and no money moved. Your own cancel comes back as `direct.booking.cancelled`\n  (\"Cancelled by the hotel\"): match it on the booking id and treat it as already applied.\n\n## Errors\n\n```ts\nimport { ZimmerStack, ZimmerStackError } from \"@zimmerstack/connect\";\n\ntry {\n  await zs.rates.set(updates);\n} catch (err) {\n  if (err instanceof ZimmerStackError) {\n    // err.code is stable (RATE_LIMITED, RATE_OUT_OF_BAND, SCOPE_MISSING, …); err.message is for people.\n    // Show err.message to the person; branch on err.code; never retry unless err.retryable.\n  }\n  throw err;\n}\n```\n\n- `SCOPE_MISSING`: the key was not given that permission. Say which one is missing; the hotel's\n  owner grants it (Admin → Developers → API keys). Do not look for another route.\n- `API_KEY_INVALID`, `API_KEY_REVOKED`, `API_KEY_EXPIRED`: stop. The client refuses every later call\n  by itself; repeated bad calls get the server's address refused.\n- `RATE_OUT_OF_BAND`, `MODIFIER_OUT_OF_BAND`: the value is outside what the hotel allows. It is a\n  guard against a typing slip; show the message, never split the change into smaller steps to pass.\n\n## The MCP server\n\nThe package carries an MCP server for you, the agent: `npx -y @zimmerstack/connect mcp`. If it is\nconnected, use it instead of guessing: `zimmerstack_reference` looks up any operation, type, limit\nor error code from the API's own contract, and `zimmerstack_sandbox_read` /\n`zimmerstack_sandbox_write` make one call on the sandbox so you can see real ids and try a body\nbefore you write the code that sends it. `zimmerstack_doctor` says what is wrong when a call is\nrefused or a webhook does not arrive; `zimmerstack_sandbox_limits` prints every budget and how full it\nis; `zimmerstack_sandbox_simulate` makes a real booking or channel event of any type on the sandbox, and\n`zimmerstack_sandbox_events` reads the ordered log, so a receiver and its catch-up can be tried end to\nend. `zimmerstack_sandbox_dry_run` shows what a write would do with nothing written, and its notices;\n`zimmerstack_sandbox_explain` tells one night's whole story; `zimmerstack_sandbox_close` closes or reopens\na room type everywhere; `zimmerstack_sandbox_fault` makes the sandbox's pretend channel refuse, throttle\nor go down, so the code that handles a refused value or an outage can be tried before a live hotel meets\none (in your own tests: `zs.sandbox.faults.set` and `.clear`). It works with a `zsk_test_` key only and refuses a live one. It is for building; the application\nyou write calls the API through the client, never through these tools.\n\n## Before you call the work done\n\n- [ ] The key is read from the environment, on a server, and appears in no committed file or log.\n- [ ] Every screen that writes sends only what the person changed, once, on their action.\n- [ ] No retry loop, no timer and no polling faster than 15 seconds around a call of this package.\n- [ ] Errors show `err.message` to the person and branch on `err.code`.\n- [ ] Tests run against a `zsk_test_` key or a fake `fetch`; none needs a live key.\n- [ ] Where a modifier is saved, the screen says when it takes effect, and the re-send is its own button.\n- [ ] A PMS that pushes room counts applies every website booking to its own calendar before it pushes.\n- [ ] A website booking is cancelled only from a person's own action, with the refund they chose.\n- [ ] A room type or a rate plan is deleted only from a person's own action, after a confirmation that names it.\n- [ ] The webhook receiver saves its place in the event log and catches up from it; nothing depends on a delivery arriving, or arriving in order.\n- [ ] A write's answer is read: `rejected`, `rounded` and a batch that reads `failed` reach the person who saved.\n- [ ] Money is handled as the API's decimal strings with the package's helpers; nothing divides by 100.\n- [ ] Guest contact the application needs is copied when the booking arrives, and `contactWithheld` is handled.\n- [ ] After every save of prices, room counts or stay rules, the notices (`noticesOf`) reach the person who saved.\n- [ ] A button that closes a night says what it closes: one rate plan (stop-sell), the room's count (0), or both (`zs.availability.close`).\n- [ ] A value shown once (a key, a connect link, a webhook secret) is taken with `shownOnce`, stored at once, and never logged.\n- [ ] Code that reads `event.property` runs only after the event is known not to be an incident or a support-ticket event.\n- [ ] No screen asks for, and no code stores, a booking site's password.\n- [ ] `npx @zimmerstack/connect doctor` reports nothing that needs attention.\n";
 
 export interface ReferenceOperation {
   key: string;
@@ -80,7 +80,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -178,6 +178,83 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     {
      "status": 503,
      "description": "PROPERTY_BUSY: this hotel is still being added by an earlier request, retry with the same key; PRICE_UNAVAILABLE: it could not be priced just now; or WRITES_FROZEN as on every structure write. Nothing here is a verdict: honour Retry-After and send the same request again"
+    }
+   ]
+  },
+  {
+   "key": "PATCH /properties/{propertyId}",
+   "summary": "Change a hotel",
+   "description": "Scope properties:write, company keys only; X-ZS-Property is not read. Changes the hotel's name and its address (line1, city, state, postalCode): send only the fields to change, at least one. Never its country, currency, time zone, owner or tax id: a body that names one is 400 VALIDATION. It changes the hotel's record in ZimmerStack, not the name of a listing on an OTA. Only a hotel you added; who pays for it is not asked. The answer is the hotel in GET /properties' shape with its address and changed, the fields whose stored value moved. With a test key it changes one of your sandboxes. x-zimmerstack.properties has the whole flow.",
+   "scope": "properties:write",
+   "call": "zs.properties.update(propertyId, changes)",
+   "also": [],
+   "path": [
+    "propertyId"
+   ],
+   "query": [],
+   "body": "PropertyChange",
+   "response": "PropertyChanged",
+   "answerStatus": [
+    200
+   ],
+   "idempotent": true,
+   "request": {
+    "name": "Ganga Riverside Guest House",
+    "address": {
+     "line1": "16 Assi Ghat Road"
+    }
+   },
+   "answer": {
+    "id": 63,
+    "name": "Ganga Riverside Guest House",
+    "timezone": "Asia/Kolkata",
+    "currency": "INR",
+    "channelManager": false,
+    "sandbox": false,
+    "address": {
+     "line1": "16 Assi Ghat Road",
+     "city": "Varanasi",
+     "state": "Uttar Pradesh",
+     "postalCode": "221005",
+     "country": "IN"
+    },
+    "changed": [
+     "name",
+     "address.line1"
+    ]
+   },
+   "refusals": [
+    {
+     "status": 400,
+     "description": "data.code VALIDATION: no field to change was sent, a name or a part of the address outside its length, or a field this request never changes (country, currency, timezone, owner, taxId, roomTypes)"
+    },
+    {
+     "status": 401,
+     "description": "Missing, malformed, unknown or revoked key (data.code API_KEY_INVALID | API_KEY_REVOKED | API_KEY_EXPIRED)"
+    },
+    {
+     "status": 403,
+     "description": "COMPANY_KEY_REQUIRED: a hotel's own key was used; SCOPE_MISSING: the company key lacks properties:write; IP_NOT_ALLOWED as everywhere; or WRITES_SUSPENDED: ZimmerStack has suspended your company's writes"
+    },
+    {
+     "status": 404,
+     "description": "No hotel with this id that this key may act on"
+    },
+    {
+     "status": 409,
+     "description": "PROPERTY_NOT_CHANGEABLE: not yours to change, data.details.reason is OWNER_ALLOWED (its owner let you in, and its owner changes it); or IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_FLIGHT"
+    },
+    {
+     "status": 413,
+     "description": "Body larger than 1048576 bytes (x-zimmerstack.limits.maxBodyBytes); nothing was read"
+    },
+    {
+     "status": 429,
+     "description": "A per-minute budget. Honour Retry-After"
+    },
+    {
+     "status": 503,
+     "description": "ZimmerStack has paused every write to the channel manager (WRITES_FROZEN), or the write could not be checked against its budgets (SHIELD_UNAVAILABLE). Nothing was written; honour Retry-After"
     }
    ]
   },
@@ -332,7 +409,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -485,7 +562,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -585,7 +662,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -747,7 +824,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
   {
    "key": "PUT /catalog/rate-plans",
    "summary": "Create or change rate plans by your own ref",
-   "description": "Scope catalog:write. Up to 100 per request, each ref once; name the room type by our id (roomTypeId) or by the ref you gave it (roomTypeRef, in this request or an earlier one). A ref seen before is updated where the fields differ; a new ref whose name exists under the same room type (with no ref) adopts that plan; anything else is created here and on the channel manager at once, seeded at defaultRateMinor when given. A plan never moves between room types.",
+   "description": "Scope catalog:write. Up to 100 per request, each ref once; name the room type by our id (roomTypeId) or by the ref you gave it (roomTypeRef, in this request or an earlier one). A ref seen before is updated where the fields differ; a new ref whose name exists under the same room type (with no ref) adopts that plan; anything else is created here and on the channel manager at once, seeded at defaultRate when given. A plan never moves between room types.",
    "scope": "catalog:write",
    "call": "zs.catalog.upsertRatePlans(body)",
    "also": [
@@ -770,7 +847,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
       "mealPlan": "CP",
       "occupancy": 2,
       "refundable": true,
-      "defaultRateMinor": 450000
+      "defaultRate": "4500.00"
      },
      {
       "ref": "rp-ph-ro",
@@ -779,22 +856,22 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
       "mealPlan": "EP",
       "occupancy": 3,
       "refundable": false,
-      "defaultRateMinor": 1200000
+      "defaultRate": 12000
      }
     ]
    },
    "answer": {
     "items": [
      {
-      "ref": "rt-deluxe",
-      "id": 412,
+      "ref": "rp-bb",
+      "id": 901,
       "action": "adopted",
       "sync": "IN_SYNC",
       "notice": null
      },
      {
-      "ref": "rt-penthouse",
-      "id": 414,
+      "ref": "rp-ph-ro",
+      "id": 903,
       "action": "created",
       "sync": "IN_SYNC",
       "notice": null
@@ -926,7 +1003,42 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": false,
    "request": null,
-   "answer": null,
+   "answer": {
+    "from": "2026-12-24",
+    "to": "2026-12-26",
+    "cells": [
+     {
+      "roomTypeId": 412,
+      "date": "2026-12-24",
+      "available": 2
+     },
+     {
+      "roomTypeId": 412,
+      "date": "2026-12-25",
+      "available": 2
+     },
+     {
+      "roomTypeId": 412,
+      "date": "2026-12-26",
+      "available": 2
+     },
+     {
+      "roomTypeId": 413,
+      "date": "2026-12-24",
+      "available": 1
+     },
+     {
+      "roomTypeId": 413,
+      "date": "2026-12-25",
+      "available": 1
+     },
+     {
+      "roomTypeId": 413,
+      "date": "2026-12-26",
+      "available": 1
+     }
+    ]
+   },
    "refusals": [
     {
      "status": 400,
@@ -946,7 +1058,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -976,67 +1088,70 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     "updates": [
      {
       "roomTypeId": 412,
-      "dateFrom": "2026-11-01",
-      "dateTo": "2026-11-30",
+      "dateFrom": "2026-12-01",
+      "dateTo": "2026-12-31",
       "available": 5
      },
      {
       "roomTypeId": 412,
-      "dateFrom": "2026-11-14",
-      "dateTo": "2026-11-14",
+      "dateFrom": "2026-12-24",
+      "dateTo": "2026-12-26",
       "available": 2
      }
     ]
    },
    "answer": {
     "dryRun": true,
-    "resource": "restrictions",
+    "resource": "availability",
     "verdict": "would-write",
     "refusal": null,
-    "requestedCells": 1,
-    "wouldChangeCells": 1,
-    "unchangedCells": 0,
+    "requestedCells": 31,
+    "wouldChangeCells": 3,
+    "unchangedCells": 28,
     "heldCells": 0,
     "wouldRejectCells": 0,
     "lane": false,
     "wouldChange": [
      {
-      "ratePlanIds": [
-       901
+      "roomTypeIds": [
+       412
       ],
-      "dateFrom": "2026-12-31",
+      "dateFrom": "2026-12-24",
+      "dateTo": "2026-12-26",
+      "days": null,
+      "cells": 3,
+      "available": 2
+     }
+    ],
+    "unchanged": [
+     {
+      "roomTypeIds": [
+       412
+      ],
+      "dateFrom": "2026-12-01",
+      "dateTo": "2026-12-23",
+      "days": null,
+      "cells": 23,
+      "available": 5
+     },
+     {
+      "roomTypeIds": [
+       412
+      ],
+      "dateFrom": "2026-12-27",
       "dateTo": "2026-12-31",
       "days": null,
-      "cells": 1,
-      "stopSell": true
+      "cells": 5,
+      "available": 5
      }
     ],
-    "unchanged": [],
     "held": [],
     "wouldReject": [],
-    "notices": [
-     {
-      "code": "ROOM_STILL_ON_SALE",
-      "level": "warning",
-      "message": "You sent a stop-sell for rate plan 901: a switch on that plan, not on the room. Room type 412 is still on sale on 1 night through its other plan 904.",
-      "action": "To close the room on every plan and every channel, use POST /availability/close for room type 412, or send availability 0 for it (PUT /availability).",
-      "roomTypeId": 412,
-      "ratePlanIds": [
-       901
-      ],
-      "otherRatePlanIds": [
-       904
-      ],
-      "dateFrom": "2026-12-31",
-      "dateTo": "2026-12-31",
-      "nights": 1
-     }
-    ],
     "spent": {
-     "cells": 1
+     "cells": 31
     },
     "wouldSpend": {
-     "changedCells": 1
+     "changedCells": 3
     },
     "note": "Nothing was written, queued or sent, and no idempotency key was stored. Send the same body without dryRun to do it. Our record can move between the two: the real answer is the truth."
    },
@@ -1059,7 +1174,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 413,
@@ -1108,7 +1223,56 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": false,
    "request": null,
-   "answer": null,
+   "answer": {
+    "from": "2026-12-24",
+    "to": "2026-12-26",
+    "currency": "INR",
+    "decimals": 2,
+    "cells": [
+     {
+      "ratePlanId": 901,
+      "date": "2026-12-24",
+      "rate": "4500.00",
+      "rateMinor": 450000,
+      "source": "MANUAL"
+     },
+     {
+      "ratePlanId": 901,
+      "date": "2026-12-25",
+      "rate": "5200.00",
+      "rateMinor": 520000,
+      "source": "MANUAL"
+     },
+     {
+      "ratePlanId": 901,
+      "date": "2026-12-26",
+      "rate": "5200.00",
+      "rateMinor": 520000,
+      "source": "MANUAL"
+     },
+     {
+      "ratePlanId": 904,
+      "date": "2026-12-24",
+      "rate": "4000.00",
+      "rateMinor": 400000,
+      "source": "PLAN_DEFAULT"
+     },
+     {
+      "ratePlanId": 904,
+      "date": "2026-12-25",
+      "rate": "4000.00",
+      "rateMinor": 400000,
+      "source": "PLAN_DEFAULT"
+     },
+     {
+      "ratePlanId": 904,
+      "date": "2026-12-26",
+      "rate": "4000.00",
+      "rateMinor": 400000,
+      "source": "PLAN_DEFAULT"
+     }
+    ]
+   },
    "refusals": [
     {
      "status": 400,
@@ -1128,7 +1292,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -1158,14 +1322,14 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     "updates": [
      {
       "ratePlanId": 901,
-      "dateFrom": "2026-11-01",
+      "dateFrom": "2026-12-01",
       "dateTo": "2027-03-31",
       "rate": "4500.00",
       "currency": "INR"
      },
      {
       "ratePlanId": 901,
-      "dateFrom": "2026-11-01",
+      "dateFrom": "2026-12-01",
       "dateTo": "2027-03-31",
       "days": [
        "fr",
@@ -1178,12 +1342,12 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    },
    "answer": {
     "dryRun": true,
-    "resource": "restrictions",
+    "resource": "rates",
     "verdict": "would-write",
     "refusal": null,
-    "requestedCells": 1,
-    "wouldChangeCells": 1,
-    "unchangedCells": 0,
+    "requestedCells": 121,
+    "wouldChangeCells": 34,
+    "unchangedCells": 87,
     "heldCells": 0,
     "wouldRejectCells": 0,
     "lane": false,
@@ -1192,39 +1356,43 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
       "ratePlanIds": [
        901
       ],
-      "dateFrom": "2026-12-31",
-      "dateTo": "2026-12-31",
-      "days": null,
-      "cells": 1,
-      "stopSell": true
+      "dateFrom": "2026-12-04",
+      "dateTo": "2027-03-27",
+      "days": [
+       "fr",
+       "sa"
+      ],
+      "cells": 34,
+      "rate": "5200.00",
+      "rateMinor": 520000
      }
     ],
-    "unchanged": [],
-    "held": [],
-    "wouldReject": [],
-    "notices": [
+    "unchanged": [
      {
-      "code": "ROOM_STILL_ON_SALE",
-      "level": "warning",
-      "message": "You sent a stop-sell for rate plan 901: a switch on that plan, not on the room. Room type 412 is still on sale on 1 night through its other plan 904.",
-      "action": "To close the room on every plan and every channel, use POST /availability/close for room type 412, or send availability 0 for it (PUT /availability).",
-      "roomTypeId": 412,
       "ratePlanIds": [
        901
       ],
-      "otherRatePlanIds": [
-       904
+      "dateFrom": "2026-12-01",
+      "dateTo": "2027-03-31",
+      "days": [
+       "mo",
+       "tu",
+       "we",
+       "th",
+       "su"
       ],
-      "dateFrom": "2026-12-31",
-      "dateTo": "2026-12-31",
-      "nights": 1
+      "cells": 87,
+      "rate": "4500.00",
+      "rateMinor": 450000
      }
     ],
+    "held": [],
+    "wouldReject": [],
     "spent": {
-     "cells": 1
+     "cells": 121
     },
     "wouldSpend": {
-     "changedCells": 1
+     "changedCells": 34
     },
     "note": "Nothing was written, queued or sent, and no idempotency key was stored. Send the same body without dryRun to do it. Our record can move between the two: the real answer is the truth."
    },
@@ -1247,7 +1415,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 413,
@@ -1296,7 +1464,42 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": false,
    "request": null,
-   "answer": null,
+   "answer": {
+    "from": "2026-12-24",
+    "to": "2026-12-26",
+    "cells": [
+     {
+      "ratePlanId": 901,
+      "date": "2026-12-24",
+      "stopSell": null,
+      "closedToArrival": false,
+      "closedToDeparture": null,
+      "minStayArrival": 2,
+      "minStayThrough": null,
+      "maxStay": null
+     },
+     {
+      "ratePlanId": 901,
+      "date": "2026-12-25",
+      "stopSell": null,
+      "closedToArrival": false,
+      "closedToDeparture": null,
+      "minStayArrival": 2,
+      "minStayThrough": null,
+      "maxStay": null
+     },
+     {
+      "ratePlanId": 901,
+      "date": "2026-12-26",
+      "stopSell": null,
+      "closedToArrival": false,
+      "closedToDeparture": null,
+      "minStayArrival": 2,
+      "minStayThrough": null,
+      "maxStay": null
+     }
+    ]
+   },
    "refusals": [
     {
      "status": 400,
@@ -1316,7 +1519,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -1364,13 +1567,24 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     "resource": "restrictions",
     "verdict": "would-write",
     "refusal": null,
-    "requestedCells": 1,
-    "wouldChangeCells": 1,
+    "requestedCells": 4,
+    "wouldChangeCells": 4,
     "unchangedCells": 0,
     "heldCells": 0,
     "wouldRejectCells": 0,
     "lane": false,
     "wouldChange": [
+     {
+      "ratePlanIds": [
+       901
+      ],
+      "dateFrom": "2026-12-24",
+      "dateTo": "2026-12-26",
+      "days": null,
+      "cells": 3,
+      "closedToArrival": false,
+      "minStayArrival": 2
+     },
      {
       "ratePlanIds": [
        901
@@ -1404,10 +1618,10 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      }
     ],
     "spent": {
-     "cells": 1
+     "cells": 4
     },
     "wouldSpend": {
-     "changedCells": 1
+     "changedCells": 4
     },
     "note": "Nothing was written, queued or sent, and no idempotency key was stored. Send the same body without dryRun to do it. Our record can move between the two: the real answer is the truth."
    },
@@ -1430,7 +1644,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 413,
@@ -1475,7 +1689,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    },
    "answer": {
     "action": "close",
-    "dryRun": false,
+    "dryRun": true,
     "roomTypeId": 412,
     "dateFrom": "2026-12-24",
     "dateTo": "2026-12-26",
@@ -1508,18 +1722,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      }
     ],
     "skippedNights": 0,
-    "batches": [
-     {
-      "resource": "availability",
-      "batchId": "3c2b1a09-8f7e-4d6c-b5a4-938271605f4e",
-      "poll": "/api/v1/connect-api/v1/batches/3c2b1a09-8f7e-4d6c-b5a4-938271605f4e"
-     },
-     {
-      "resource": "restrictions",
-      "batchId": "9e8d7c6b-5a49-4382-a716-0f1e2d3c4b5a",
-      "poll": "/api/v1/connect-api/v1/batches/9e8d7c6b-5a49-4382-a716-0f1e2d3c4b5a"
-     }
-    ]
+    "batches": []
    },
    "refusals": [
     {
@@ -1540,7 +1743,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 413,
@@ -1581,7 +1784,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    },
    "answer": {
     "action": "reopen",
-    "dryRun": false,
+    "dryRun": true,
     "roomTypeId": 412,
     "dateFrom": "2026-12-24",
     "dateTo": "2026-12-26",
@@ -1608,18 +1811,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     ],
     "notReached": [],
     "skippedNights": 0,
-    "batches": [
-     {
-      "resource": "restrictions",
-      "batchId": "5d4c3b2a-1908-4f7e-8d6c-b5a493827160",
-      "poll": "/api/v1/connect-api/v1/batches/5d4c3b2a-1908-4f7e-8d6c-b5a493827160"
-     },
-     {
-      "resource": "availability",
-      "batchId": "6f5e4d3c-2b1a-4098-9f7e-6d5c4b3a2910",
-      "poll": "/api/v1/connect-api/v1/batches/6f5e4d3c-2b1a-4098-9f7e-6d5c4b3a2910"
-     }
-    ]
+    "batches": []
    },
    "refusals": [
     {
@@ -1640,7 +1832,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 413,
@@ -1933,7 +2125,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -1987,7 +2179,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -2049,7 +2241,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -2073,7 +2265,17 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": false,
    "request": null,
-   "answer": null,
+   "answer": {
+    "active": false,
+    "kind": null,
+    "remaining": null,
+    "until": null,
+    "message": null,
+    "setAt": null,
+    "watch": [
+     "No fault is set: everything you send lands in our record within a minute."
+    ]
+   },
    "refusals": [
     {
      "status": 401,
@@ -2089,7 +2291,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -2113,7 +2315,45 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": false,
    "request": null,
-   "answer": null,
+   "answer": {
+    "propertyId": 61,
+    "sandbox": false,
+    "ariAuthoritative": true,
+    "inventory": {
+     "state": "IN_SYNC",
+     "pendingCells": 0,
+     "lastOkAt": "2026-12-01T09:13:20.000Z",
+     "lastError": null,
+     "outOfSyncSince": null
+    },
+    "rates": {
+     "dirtyCells": 12,
+     "parkedCells": 0,
+     "lastPushAt": "2026-12-01T09:14:31.000Z",
+     "lastErrorAt": null,
+     "lastError": null,
+     "driftCells": 0,
+     "driftSeenAt": null
+    },
+    "shield": {
+     "level": "CLEAR",
+     "reason": null,
+     "until": null
+    },
+    "newestPendingBatch": {
+     "batchId": "7f1d2c4e-5a6b-4c8d-9e0f-112233445566",
+     "resource": "rates",
+     "createdAt": "2026-12-01T09:14:03.201Z",
+     "requestedCells": 121,
+     "acceptedCells": 34,
+     "noopCells": 87,
+     "rejected": [],
+     "status": "pending",
+     "pendingCells": 12,
+     "parkedCells": 0,
+     "lastError": null
+    }
+   },
    "refusals": [
     {
      "status": 401,
@@ -2129,7 +2369,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -2172,7 +2412,59 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": false,
    "request": null,
-   "answer": null,
+   "answer": {
+    "since": "2026-12-03T09:20:00.000Z",
+    "items": [
+     {
+      "bookingId": 48213,
+      "reference": "SB-7KQ2MX9D",
+      "externalReference": "WEB-2026-000123",
+      "status": "UPCOMING",
+      "checkIn": "2026-12-20",
+      "checkOut": "2026-12-23",
+      "nights": 3,
+      "currency": "INR",
+      "totalAmount": "27000.00",
+      "totalPaid": "9000.00",
+      "balanceDue": "18000.00",
+      "guest": {
+       "name": "Asha Verma",
+       "phone": "+919876543210",
+       "email": "asha@example.com"
+      },
+      "rooms": [
+       {
+        "bookingRoomId": 90001,
+        "roomTypeId": 412,
+        "ratePlanId": 901,
+        "mealPlan": "CP",
+        "adults": 2,
+        "children": 1,
+        "nightlyRate": "4500.00",
+        "status": "UPCOMING"
+       },
+       {
+        "bookingRoomId": 90002,
+        "roomTypeId": 412,
+        "ratePlanId": 901,
+        "mealPlan": "CP",
+        "adults": 2,
+        "children": 0,
+        "nightlyRate": "4500.00",
+        "status": "UPCOMING"
+       }
+      ],
+      "inventory": {
+       "eventRecorded": true,
+       "channelManager": true,
+       "pushedBy": "inventory-drain"
+      },
+      "replay": false,
+      "createdAt": "2026-12-10T09:14:03.201Z",
+      "cancelledAt": null
+     }
+    ]
+   },
    "refusals": [
     {
      "status": 400,
@@ -2192,7 +2484,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -2270,7 +2562,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      {
       "bookingRoomId": 90001,
       "roomTypeId": 412,
-      "ratePlanId": null,
+      "ratePlanId": 901,
       "mealPlan": "CP",
       "adults": 2,
       "children": 1,
@@ -2280,7 +2572,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      {
       "bookingRoomId": 90002,
       "roomTypeId": 412,
-      "ratePlanId": null,
+      "ratePlanId": 901,
       "mealPlan": "CP",
       "adults": 2,
       "children": 0,
@@ -2293,8 +2585,8 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      "channelManager": true,
      "pushedBy": "inventory-drain"
     },
-    "replay": false,
-    "createdAt": "2026-10-20T09:14:03.201Z",
+    "replay": true,
+    "createdAt": "2026-12-10T09:14:03.201Z",
     "cancelledAt": null
    },
    "refusals": [
@@ -2367,7 +2659,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      {
       "bookingRoomId": 90001,
       "roomTypeId": 412,
-      "ratePlanId": null,
+      "ratePlanId": 901,
       "mealPlan": "CP",
       "adults": 2,
       "children": 1,
@@ -2377,7 +2669,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      {
       "bookingRoomId": 90002,
       "roomTypeId": 412,
-      "ratePlanId": null,
+      "ratePlanId": 901,
       "mealPlan": "CP",
       "adults": 2,
       "children": 0,
@@ -2391,7 +2683,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      "pushedBy": "inventory-drain"
     },
     "replay": false,
-    "createdAt": "2026-10-20T09:14:03.201Z",
+    "createdAt": "2026-12-10T09:14:03.201Z",
     "cancelledAt": null
    },
    "refusals": [
@@ -2409,7 +2701,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -2437,7 +2729,54 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    "request": {
     "reason": "Guest cancelled on the website"
    },
-   "answer": null,
+   "answer": {
+    "bookingId": 48213,
+    "reference": "SB-7KQ2MX9D",
+    "externalReference": "WEB-2026-000123",
+    "status": "CANCELLED",
+    "checkIn": "2026-12-20",
+    "checkOut": "2026-12-23",
+    "nights": 3,
+    "currency": "INR",
+    "totalAmount": "27000.00",
+    "totalPaid": "9000.00",
+    "balanceDue": "18000.00",
+    "guest": {
+     "name": "Asha Verma",
+     "phone": "+919876543210",
+     "email": "asha@example.com"
+    },
+    "rooms": [
+     {
+      "bookingRoomId": 90001,
+      "roomTypeId": 412,
+      "ratePlanId": 901,
+      "mealPlan": "CP",
+      "adults": 2,
+      "children": 1,
+      "nightlyRate": "4500.00",
+      "status": "CANCELLED"
+     },
+     {
+      "bookingRoomId": 90002,
+      "roomTypeId": 412,
+      "ratePlanId": 901,
+      "mealPlan": "CP",
+      "adults": 2,
+      "children": 0,
+      "nightlyRate": "4500.00",
+      "status": "CANCELLED"
+     }
+    ],
+    "inventory": {
+     "eventRecorded": true,
+     "channelManager": true,
+     "pushedBy": "inventory-drain"
+    },
+    "replay": false,
+    "createdAt": "2026-12-10T09:14:03.201Z",
+    "cancelledAt": "2026-12-11T08:02:19.000Z"
+   },
    "refusals": [
     {
      "status": 401,
@@ -2504,7 +2843,53 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": false,
    "request": null,
-   "answer": null,
+   "answer": {
+    "since": "2026-12-09T12:05:00.000Z",
+    "retentionDays": 7,
+    "items": [
+     {
+      "id": "5820417",
+      "at": "2026-12-10T12:04:31.118Z",
+      "method": "GET",
+      "route": "/sync",
+      "status": 200,
+      "errorCode": null,
+      "address": "203.0.113.24",
+      "durationMs": 41,
+      "requestId": "rq_mxhiep729f2c1a7e",
+      "propertyId": 61,
+      "keyId": 14
+     },
+     {
+      "id": "5820398",
+      "at": "2026-12-10T12:04:16.902Z",
+      "method": "PUT",
+      "route": "/rates",
+      "status": 202,
+      "errorCode": null,
+      "address": "203.0.113.24",
+      "durationMs": 187,
+      "requestId": "rq_mxhiee864be07d31",
+      "propertyId": 61,
+      "keyId": 14
+     },
+     {
+      "id": "5820371",
+      "at": "2026-12-10T12:03:58.440Z",
+      "method": "PUT",
+      "route": "/rates",
+      "status": 429,
+      "errorCode": "RATE_LIMITED",
+      "address": "203.0.113.24",
+      "durationMs": 6,
+      "requestId": "rq_mxhidzzcc81a5e06",
+      "propertyId": 61,
+      "keyId": 14
+     }
+    ],
+    "more": false,
+    "nextCursor": null
+   },
    "refusals": [
     {
      "status": 400,
@@ -2524,7 +2909,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -2598,7 +2983,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -2734,7 +3119,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -2788,7 +3173,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    "idempotent": false,
    "request": null,
    "answer": {
-    "since": "2026-10-23T12:00:00.000Z",
+    "since": "2026-12-03T12:30:00.000Z",
     "items": [
      {
       "id": 100001,
@@ -2802,8 +3187,8 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
        "sourceGroup": "INDIRECT"
       },
       "stay": {
-       "checkIn": "2026-11-13",
-       "checkOut": "2026-11-15",
+       "checkIn": "2026-12-24",
+       "checkOut": "2026-12-26",
        "nights": 2,
        "dayUse": false
       },
@@ -2825,12 +3210,12 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
        {
         "roomTypeId": 412,
         "ratePlanId": 901,
-        "roomTypeName": "Deluxe Sea View",
+        "roomTypeName": "Deluxe Garden Room",
         "mealPlan": "CP",
         "adults": 2,
         "children": 0,
-        "checkIn": "2026-11-13",
-        "checkOut": "2026-11-15",
+        "checkIn": "2026-12-24",
+        "checkOut": "2026-12-26",
         "nights": 2,
         "dayUse": false,
         "ratePerNight": 2700,
@@ -2855,12 +3240,12 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
        "netPayoutAmount": 4050
       },
       "cancellation": null,
-      "createdAt": "2026-10-30T12:00:00.000Z",
-      "updatedAt": "2026-10-30T12:00:00.000Z"
+      "createdAt": "2026-12-10T12:00:00.000Z",
+      "updatedAt": "2026-12-10T12:00:00.000Z"
      }
     ],
     "more": false,
-    "nextCursor": "WyIyMDI2LTEwLTI0VDEwOjAwOjAwLjAwMFoiLDQxODJd"
+    "nextCursor": "WyIyMDI2LTEyLTEwVDEyOjAwOjAwLjAwMFoiLDEwMDAwMV0"
    },
    "refusals": [
     {
@@ -2877,7 +3262,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -2915,8 +3300,8 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      "sourceGroup": "INDIRECT"
     },
     "stay": {
-     "checkIn": "2026-11-13",
-     "checkOut": "2026-11-15",
+     "checkIn": "2026-12-24",
+     "checkOut": "2026-12-26",
      "nights": 2,
      "dayUse": false
     },
@@ -2938,12 +3323,12 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      {
       "roomTypeId": 412,
       "ratePlanId": 901,
-      "roomTypeName": "Deluxe Sea View",
+      "roomTypeName": "Deluxe Garden Room",
       "mealPlan": "CP",
       "adults": 2,
       "children": 0,
-      "checkIn": "2026-11-13",
-      "checkOut": "2026-11-15",
+      "checkIn": "2026-12-24",
+      "checkOut": "2026-12-26",
       "nights": 2,
       "dayUse": false,
       "ratePerNight": 2700,
@@ -2968,8 +3353,8 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      "netPayoutAmount": 4050
     },
     "cancellation": null,
-    "createdAt": "2026-10-30T12:00:00.000Z",
-    "updatedAt": "2026-10-30T12:00:00.000Z"
+    "createdAt": "2026-12-10T12:00:00.000Z",
+    "updatedAt": "2026-12-10T12:00:00.000Z"
    },
    "refusals": [
     {
@@ -2986,7 +3371,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -3010,7 +3395,42 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": false,
    "request": null,
-   "answer": null,
+   "answer": {
+    "items": [
+     {
+      "id": 7,
+      "mode": "live",
+      "url": "https://example.com/zimmerstack/webhooks",
+      "description": "Bookings and channel alerts for our PMS",
+      "apiVersion": "2026-09-01",
+      "eventTypes": [
+       "channel.booking.created",
+       "channel.booking.modified",
+       "channel.booking.cancelled",
+       "channel.sync.alert",
+       "channel.sync.recovered"
+      ],
+      "includeGuestContact": false,
+      "status": "ACTIVE",
+      "statusReason": null,
+      "secretVersion": 1,
+      "previousSecretExpiresAt": null,
+      "notifyEmail": null,
+      "createdAt": "2026-12-10T09:30:00.000Z",
+      "updatedAt": "2026-12-10T12:00:03.000Z",
+      "lastStoppedAt": null,
+      "health": {
+       "state": "healthy",
+       "consecutiveFailures": 0,
+       "failingSince": null,
+       "lastSuccessAt": "2026-12-10T12:00:03.000Z",
+       "lastFailureAt": null,
+       "lastErrorMessage": null
+      }
+     }
+    ],
+    "limit": 3
+   },
    "refusals": [
     {
      "status": 401,
@@ -3026,7 +3446,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -3049,8 +3469,45 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     201
    ],
    "idempotent": true,
-   "request": null,
-   "answer": null,
+   "request": {
+    "url": "https://example.com/zimmerstack/webhooks",
+    "description": "Bookings and channel alerts for our PMS",
+    "dataAck": true
+   },
+   "answer": {
+    "endpoint": {
+     "id": 7,
+     "mode": "live",
+     "url": "https://example.com/zimmerstack/webhooks",
+     "description": "Bookings and channel alerts for our PMS",
+     "apiVersion": "2026-09-01",
+     "eventTypes": [
+      "channel.booking.created",
+      "channel.booking.modified",
+      "channel.booking.cancelled",
+      "channel.sync.alert",
+      "channel.sync.recovered"
+     ],
+     "includeGuestContact": false,
+     "status": "ACTIVE",
+     "statusReason": null,
+     "secretVersion": 1,
+     "previousSecretExpiresAt": null,
+     "notifyEmail": null,
+     "createdAt": "2026-12-10T09:30:00.000Z",
+     "updatedAt": "2026-12-10T09:30:00.000Z",
+     "lastStoppedAt": null,
+     "health": {
+      "state": "healthy",
+      "consecutiveFailures": 0,
+      "failingSince": null,
+      "lastSuccessAt": null,
+      "lastFailureAt": null,
+      "lastErrorMessage": null
+     }
+    },
+    "secret": "whsec_…"
+   },
    "refusals": [
     {
      "status": 401,
@@ -3092,7 +3549,37 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": false,
    "request": null,
-   "answer": null,
+   "answer": {
+    "id": 7,
+    "mode": "live",
+    "url": "https://example.com/zimmerstack/webhooks",
+    "description": "Bookings and channel alerts for our PMS",
+    "apiVersion": "2026-09-01",
+    "eventTypes": [
+     "channel.booking.created",
+     "channel.booking.modified",
+     "channel.booking.cancelled",
+     "channel.sync.alert",
+     "channel.sync.recovered"
+    ],
+    "includeGuestContact": false,
+    "status": "ACTIVE",
+    "statusReason": null,
+    "secretVersion": 1,
+    "previousSecretExpiresAt": null,
+    "notifyEmail": null,
+    "createdAt": "2026-12-10T09:30:00.000Z",
+    "updatedAt": "2026-12-10T12:00:03.000Z",
+    "lastStoppedAt": null,
+    "health": {
+     "state": "healthy",
+     "consecutiveFailures": 0,
+     "failingSince": null,
+     "lastSuccessAt": "2026-12-10T12:00:03.000Z",
+     "lastFailureAt": null,
+     "lastErrorMessage": null
+    }
+   },
    "refusals": [
     {
      "status": 401,
@@ -3108,7 +3595,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -3133,8 +3620,53 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     200
    ],
    "idempotent": true,
-   "request": null,
-   "answer": null,
+   "request": {
+    "eventTypes": [
+     "channel.booking.created",
+     "channel.booking.modified",
+     "channel.booking.cancelled",
+     "channel.sync.alert",
+     "channel.sync.recovered",
+     "direct.booking.created",
+     "direct.booking.modified",
+     "direct.booking.cancelled"
+    ],
+    "includeGuestContact": true
+   },
+   "answer": {
+    "id": 7,
+    "mode": "live",
+    "url": "https://example.com/zimmerstack/webhooks",
+    "description": "Bookings and channel alerts for our PMS",
+    "apiVersion": "2026-09-01",
+    "eventTypes": [
+     "channel.booking.created",
+     "channel.booking.modified",
+     "channel.booking.cancelled",
+     "channel.sync.alert",
+     "channel.sync.recovered",
+     "direct.booking.created",
+     "direct.booking.modified",
+     "direct.booking.cancelled"
+    ],
+    "includeGuestContact": true,
+    "status": "ACTIVE",
+    "statusReason": null,
+    "secretVersion": 1,
+    "previousSecretExpiresAt": null,
+    "notifyEmail": null,
+    "createdAt": "2026-12-10T09:30:00.000Z",
+    "updatedAt": "2026-12-10T12:10:00.000Z",
+    "lastStoppedAt": null,
+    "health": {
+     "state": "healthy",
+     "consecutiveFailures": 0,
+     "failingSince": null,
+     "lastSuccessAt": "2026-12-10T12:00:03.000Z",
+     "lastFailureAt": null,
+     "lastErrorMessage": null
+    }
+   },
    "refusals": [
     {
      "status": 401,
@@ -3150,7 +3682,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -3176,7 +3708,10 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": false,
    "request": null,
-   "answer": null,
+   "answer": {
+    "id": 7,
+    "deleted": true
+   },
    "refusals": [
     {
      "status": 401,
@@ -3192,7 +3727,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -3218,7 +3753,37 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": true,
    "request": null,
-   "answer": null,
+   "answer": {
+    "id": 7,
+    "mode": "live",
+    "url": "https://example.com/zimmerstack/webhooks",
+    "description": "Bookings and channel alerts for our PMS",
+    "apiVersion": "2026-09-01",
+    "eventTypes": [
+     "channel.booking.created",
+     "channel.booking.modified",
+     "channel.booking.cancelled",
+     "channel.sync.alert",
+     "channel.sync.recovered"
+    ],
+    "includeGuestContact": false,
+    "status": "PAUSED",
+    "statusReason": "Paused by the vendor",
+    "secretVersion": 1,
+    "previousSecretExpiresAt": null,
+    "notifyEmail": null,
+    "createdAt": "2026-12-10T09:30:00.000Z",
+    "updatedAt": "2026-12-10T12:30:00.000Z",
+    "lastStoppedAt": "2026-12-10T12:30:00.000Z",
+    "health": {
+     "state": "paused",
+     "consecutiveFailures": 0,
+     "failingSince": null,
+     "lastSuccessAt": "2026-12-10T12:00:03.000Z",
+     "lastFailureAt": null,
+     "lastErrorMessage": null
+    }
+   },
    "refusals": [
     {
      "status": 401,
@@ -3234,7 +3799,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -3260,7 +3825,38 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": true,
    "request": null,
-   "answer": null,
+   "answer": {
+    "id": 7,
+    "mode": "live",
+    "url": "https://example.com/zimmerstack/webhooks",
+    "description": "Bookings and channel alerts for our PMS",
+    "apiVersion": "2026-09-01",
+    "eventTypes": [
+     "channel.booking.created",
+     "channel.booking.modified",
+     "channel.booking.cancelled",
+     "channel.sync.alert",
+     "channel.sync.recovered"
+    ],
+    "includeGuestContact": false,
+    "status": "ACTIVE",
+    "statusReason": null,
+    "secretVersion": 1,
+    "previousSecretExpiresAt": null,
+    "notifyEmail": null,
+    "createdAt": "2026-12-10T09:30:00.000Z",
+    "updatedAt": "2026-12-10T12:40:00.000Z",
+    "lastStoppedAt": "2026-12-10T12:30:00.000Z",
+    "health": {
+     "state": "healthy",
+     "consecutiveFailures": 0,
+     "failingSince": null,
+     "lastSuccessAt": "2026-12-10T12:00:03.000Z",
+     "lastFailureAt": null,
+     "lastErrorMessage": null
+    },
+    "heldEvents": 3
+   },
    "refusals": [
     {
      "status": 401,
@@ -3276,7 +3872,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -3302,7 +3898,11 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": true,
    "request": null,
-   "answer": null,
+   "answer": {
+    "secret": "whsec_…",
+    "secretVersion": 2,
+    "previousExpiresAt": "2026-12-11T12:50:00.000Z"
+   },
    "refusals": [
     {
      "status": 401,
@@ -3318,7 +3918,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -3343,8 +3943,14 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     202
    ],
    "idempotent": true,
-   "request": null,
-   "answer": null,
+   "request": {
+    "eventType": "channel.booking.created"
+   },
+   "answer": {
+    "deliveryId": "48211",
+    "eventId": "e3a1f0c8-6d2b-4c57-b9a4-0f1e2d3c4b5a",
+    "eventType": "channel.booking.created"
+   },
    "refusals": [
     {
      "status": 401,
@@ -3385,8 +3991,15 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     202
    ],
    "idempotent": true,
-   "request": null,
-   "answer": null,
+   "request": {
+    "since": "2026-12-09T00:00:00.000Z"
+   },
+   "answer": {
+    "reset": 2,
+    "created": 5,
+    "scanned": 41,
+    "truncated": false
+   },
    "refusals": [
     {
      "status": 401,
@@ -3471,7 +4084,41 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": false,
    "request": null,
-   "answer": null,
+   "answer": {
+    "items": [
+     {
+      "id": "48211",
+      "eventId": "e3a1f0c8-6d2b-4c57-b9a4-0f1e2d3c4b5a",
+      "eventType": "channel.booking.created",
+      "mode": "TEST",
+      "status": "DELIVERED",
+      "attempts": 1,
+      "nextAttemptAt": "2026-12-10T13:00:00.000Z",
+      "lastError": null,
+      "occurredAt": "2026-12-10T13:00:00.000Z",
+      "deliveredAt": "2026-12-10T13:00:01.000Z",
+      "createdAt": "2026-12-10T13:00:00.000Z",
+      "payloadBytes": 1422,
+      "payloadAvailable": true
+     },
+     {
+      "id": "48209",
+      "eventId": "5c0e7a1d-2b64-4f3a-9d18-7e6a4b3c2f10",
+      "eventType": "channel.booking.created",
+      "mode": "LIVE",
+      "status": "DELIVERED",
+      "attempts": 1,
+      "nextAttemptAt": "2026-12-10T12:00:02.000Z",
+      "lastError": null,
+      "occurredAt": "2026-12-10T12:00:00.000Z",
+      "deliveredAt": "2026-12-10T12:00:03.000Z",
+      "createdAt": "2026-12-10T12:00:02.000Z",
+      "payloadBytes": 1439,
+      "payloadAvailable": true
+     }
+    ],
+    "nextCursor": null
+   },
    "refusals": [
     {
      "status": 401,
@@ -3487,7 +4134,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -3497,8 +4144,8 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
   },
   {
    "key": "GET /webhook-endpoints/{endpointId}/deliveries/{deliveryId}",
-   "summary": "One delivery: the body as sent, and every attempt",
-   "description": "Scope webhooks:manage. Each attempt carries the status your receiver answered and the first 2 KB of its body. The body follows the endpoint's guest-contact switch as it was when the delivery was made.",
+   "summary": "One delivery: the body as sent, guest contact masked, and every attempt",
+   "description": "Scope webhooks:manage. Each attempt carries the status your receiver answered and the first 2 KB of its body. payload is the event as it was sent, except that a guest's phone and email are always masked in this read, whatever the endpoint's guest-contact switch was when the delivery was made: reading a delivery leaves no line on the hotel's list of who read guest contact, so it never carries it. The bookings reads carry contact (x-zimmerstack.guestContact).",
    "scope": "webhooks:manage",
    "call": "zs.webhookEndpoints.deliveries.get(endpointId, deliveryId)",
    "also": [],
@@ -3514,7 +4161,130 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": false,
    "request": null,
-   "answer": null,
+   "answer": {
+    "id": "48209",
+    "eventId": "5c0e7a1d-2b64-4f3a-9d18-7e6a4b3c2f10",
+    "eventType": "channel.booking.created",
+    "mode": "LIVE",
+    "status": "DELIVERED",
+    "attempts": 1,
+    "nextAttemptAt": "2026-12-10T12:00:02.000Z",
+    "lastError": null,
+    "occurredAt": "2026-12-10T12:00:00.000Z",
+    "deliveredAt": "2026-12-10T12:00:03.000Z",
+    "createdAt": "2026-12-10T12:00:02.000Z",
+    "payloadBytes": 1439,
+    "payloadAvailable": true,
+    "payload": {
+     "id": "evt_5c0e7a1d-2b64-4f3a-9d18-7e6a4b3c2f10",
+     "type": "channel.booking.created",
+     "apiVersion": "2026-09-01",
+     "occurredAt": "2026-12-10T12:00:00.000Z",
+     "mode": "live",
+     "sequence": 42,
+     "property": {
+      "id": 61,
+      "name": "The Lantern House",
+      "currency": "INR",
+      "timezone": "Asia/Kolkata"
+     },
+     "data": {
+      "booking": {
+       "id": 100001,
+       "reference": "TEST-ZS-8K3Q2M",
+       "status": "CONFIRMED",
+       "stayStatus": "UPCOMING",
+       "channel": {
+        "otaName": "MakeMyTrip",
+        "otaReservationCode": "TEST-ZS-8K3Q2M",
+        "source": "CHANNEL_MANAGER",
+        "sourceGroup": "INDIRECT"
+       },
+       "stay": {
+        "checkIn": "2026-12-24",
+        "checkOut": "2026-12-26",
+        "nights": 2,
+        "dayUse": false
+       },
+       "guest": {
+        "fullName": "Asha Verma",
+        "firstName": "Asha",
+        "lastName": "Verma",
+        "country": "IN",
+        "language": "en"
+       },
+       "guestNotes": "Late arrival around 22:00. Non-smoking room please. (test event)",
+       "occupancy": {
+        "adults": 2,
+        "children": 0
+       },
+       "rooms": [
+        {
+         "roomTypeId": 412,
+         "ratePlanId": 901,
+         "roomTypeName": "Deluxe Garden Room",
+         "mealPlan": "CP",
+         "adults": 2,
+         "children": 0,
+         "checkIn": "2026-12-24",
+         "checkOut": "2026-12-26",
+         "nights": 2,
+         "dayUse": false,
+         "ratePerNight": 2700,
+         "amount": 5400,
+         "status": "UPCOMING"
+        }
+       ],
+       "amounts": {
+        "currency": "INR",
+        "total": 5400,
+        "paid": 0,
+        "balanceDue": 5400,
+        "paymentCollect": "property"
+       },
+       "finance": {
+        "otaName": "MakeMyTrip",
+        "amountBasis": "GROSS_TOTAL",
+        "currency": "INR",
+        "grossAmount": 5400,
+        "commissionAmount": 1350,
+        "taxAmount": 648,
+        "netPayoutAmount": 4050
+       },
+       "cancellation": null,
+       "createdAt": "2026-12-10T12:00:00.000Z",
+       "updatedAt": "2026-12-10T12:00:00.000Z"
+      }
+     },
+     "changes": null,
+     "previous": null
+    },
+    "attempts_log": [
+     {
+      "id": "91377",
+      "attemptNo": 1,
+      "startedAt": "2026-12-10T12:00:02.412Z",
+      "durationMs": 318,
+      "outcome": "SUCCESS",
+      "responseStatus": 200,
+      "responseBodySnippet": "ok",
+      "errorMessage": null,
+      "resolvedIp": "203.0.113.80"
+     }
+    ],
+    "request": {
+     "headers": {
+      "content-type": "application/json; charset=utf-8",
+      "webhook-id": "evt_5c0e7a1d-2b64-4f3a-9d18-7e6a4b3c2f10",
+      "webhook-timestamp": "<unix seconds at send time>",
+      "webhook-signature": "v1,<base64 HMAC-SHA256>",
+      "x-zimmerstack-event": "channel.booking.created",
+      "x-zimmerstack-delivery": "dlv_48209",
+      "x-zimmerstack-api-version": "2026-09-01",
+      "idempotency-key": "evt_5c0e7a1d-2b64-4f3a-9d18-7e6a4b3c2f10"
+     }
+    }
+   },
    "refusals": [
     {
      "status": 401,
@@ -3530,7 +4300,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -3557,7 +4327,21 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": true,
    "request": null,
-   "answer": null,
+   "answer": {
+    "id": "48209",
+    "eventId": "5c0e7a1d-2b64-4f3a-9d18-7e6a4b3c2f10",
+    "eventType": "channel.booking.created",
+    "mode": "LIVE",
+    "status": "PENDING",
+    "attempts": 0,
+    "nextAttemptAt": "2026-12-10T12:45:00.000Z",
+    "lastError": null,
+    "occurredAt": "2026-12-10T12:00:00.000Z",
+    "deliveredAt": "2026-12-10T12:00:03.000Z",
+    "createdAt": "2026-12-10T12:00:02.000Z",
+    "payloadBytes": 1439,
+    "payloadAvailable": true
+   },
    "refusals": [
     {
      "status": 401,
@@ -3758,7 +4542,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -3881,7 +4665,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -3968,7 +4752,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -4102,7 +4886,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -4147,7 +4931,34 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": false,
    "request": null,
-   "answer": null,
+   "answer": {
+    "items": [
+     {
+      "id": 1042,
+      "subject": "Bookings from Booking.com stopped arriving on two hotels",
+      "severity": "many_hotels",
+      "status": "OPEN",
+      "mode": "live",
+      "properties": {
+       "all": false,
+       "ids": [
+        61,
+        62
+       ]
+      },
+      "openedAt": "2026-11-22T04:05:12.000Z",
+      "lastMessageAt": "2026-11-22T08:52:31.000Z",
+      "firstReply": {
+       "target": "Within 60 minutes, 9:00 to 21:00 IST, every day. Opened outside those hours: by 10:00 IST.",
+       "dueAt": "2026-11-22T05:05:12.000Z",
+       "repliedAt": "2026-11-22T04:31:40.000Z"
+      },
+      "closedAt": null,
+      "closedBy": null
+     }
+    ],
+    "nextCursor": null
+   },
    "refusals": [
     {
      "status": 401,
@@ -4163,7 +4974,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -4333,7 +5144,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -4493,7 +5304,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -4521,7 +5332,137 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    "request": {
     "message": "It started again at 14:20 IST on hotel 61 only."
    },
-   "answer": null,
+   "answer": {
+    "id": 1042,
+    "subject": "Bookings from Booking.com stopped arriving on two hotels",
+    "severity": "many_hotels",
+    "status": "OPEN",
+    "mode": "live",
+    "properties": {
+     "all": false,
+     "ids": [
+      61,
+      62
+     ]
+    },
+    "openedAt": "2026-11-22T04:05:12.000Z",
+    "lastMessageAt": "2026-11-22T08:52:31.000Z",
+    "firstReply": {
+     "target": "Within 60 minutes, 9:00 to 21:00 IST, every day. Opened outside those hours: by 10:00 IST.",
+     "dueAt": "2026-11-22T05:05:12.000Z",
+     "repliedAt": "2026-11-22T04:31:40.000Z"
+    },
+    "closedAt": null,
+    "closedBy": null,
+    "messages": [
+     {
+      "id": 3310,
+      "author": "partner",
+      "body": "Since about 09:10 IST no new Booking.com booking has reached our webhook for either hotel. Their extranets show three bookings made since then. Other booking sites are arriving.",
+      "createdAt": "2026-11-22T04:05:12.000Z"
+     },
+     {
+      "id": 3311,
+      "author": "zimmerstack",
+      "body": "Booking.com signed both hotels out at 09:11 IST. Both are connected again since 09:58 IST, and the three bookings made in between have reached your webhook. Write here if anything is still missing.",
+      "createdAt": "2026-11-22T04:31:40.000Z"
+     },
+     {
+      "id": 3312,
+      "author": "partner",
+      "body": "It started again at 14:20 IST on hotel 61 only.",
+      "createdAt": "2026-11-22T08:52:31.000Z"
+     }
+    ],
+    "diagnostic": {
+     "takenAt": "2026-11-22T04:05:12.000Z",
+     "windowHours": 24,
+     "requests": {
+      "refused": 3,
+      "byCode": [
+       {
+        "status": 429,
+        "errorCode": "RATE_LIMITED",
+        "count": 3,
+        "lastAt": "2026-11-22T03:58:40.000Z"
+       }
+      ],
+      "lastRefused": [
+       {
+        "requestId": "rq_mi8x3k2a9f2c1a7e",
+        "at": "2026-11-22T03:58:40.000Z",
+        "method": "PUT",
+        "route": "/rates",
+        "status": 429,
+        "errorCode": "RATE_LIMITED",
+        "propertyId": 61
+       }
+      ]
+     },
+     "hotels": [
+      {
+       "propertyId": 61,
+       "inventory": {
+        "pendingCells": 0,
+        "outOfSyncSince": null,
+        "lastOkAt": "2026-11-22T04:03:55.000Z"
+       },
+       "rates": {
+        "waitingCells": 0,
+        "refusedCells": 0,
+        "lastPushAt": "2026-11-22T03:59:02.000Z",
+        "lastErrorAt": null,
+        "consecutiveFailures": 0
+       },
+       "channelIssues": [
+        {
+         "event": "disconnect_channel",
+         "count": 1,
+         "since": "2026-11-22T03:41:18.000Z"
+        }
+       ],
+       "shield": {
+        "level": "CLEAR",
+        "until": null
+       },
+       "usage": {
+        "cellsChanged": 1138,
+        "refusals": 0,
+        "refusedByChannelManager": 0
+       }
+      }
+     ],
+     "hotelsNotShown": 0,
+     "partner": {
+      "shield": {
+       "level": "CLEAR",
+       "until": null
+      },
+      "usage": {
+       "cellsChanged": 20914,
+       "refusals": 0,
+       "refusedByChannelManager": 0
+      }
+     },
+     "webhooks": [
+      {
+       "endpointId": 7,
+       "status": "ACTIVE",
+       "consecutiveFailures": 0,
+       "failingSince": null,
+       "lastSuccessAt": "2026-11-22T03:39:50.000Z",
+       "lastFailureAt": null,
+       "deliveries": {
+        "delivered": 212,
+        "failed": 0,
+        "pending": 0
+       },
+       "lastFailed": []
+      }
+     ],
+     "incomplete": []
+    }
+   },
    "refusals": [
     {
      "status": 401,
@@ -4563,7 +5504,137 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": true,
    "request": null,
-   "answer": null,
+   "answer": {
+    "id": 1042,
+    "subject": "Bookings from Booking.com stopped arriving on two hotels",
+    "severity": "many_hotels",
+    "status": "CLOSED",
+    "mode": "live",
+    "properties": {
+     "all": false,
+     "ids": [
+      61,
+      62
+     ]
+    },
+    "openedAt": "2026-11-22T04:05:12.000Z",
+    "lastMessageAt": "2026-11-22T08:52:31.000Z",
+    "firstReply": {
+     "target": "Within 60 minutes, 9:00 to 21:00 IST, every day. Opened outside those hours: by 10:00 IST.",
+     "dueAt": "2026-11-22T05:05:12.000Z",
+     "repliedAt": "2026-11-22T04:31:40.000Z"
+    },
+    "closedAt": "2026-11-22T10:15:00.000Z",
+    "closedBy": "partner",
+    "messages": [
+     {
+      "id": 3310,
+      "author": "partner",
+      "body": "Since about 09:10 IST no new Booking.com booking has reached our webhook for either hotel. Their extranets show three bookings made since then. Other booking sites are arriving.",
+      "createdAt": "2026-11-22T04:05:12.000Z"
+     },
+     {
+      "id": 3311,
+      "author": "zimmerstack",
+      "body": "Booking.com signed both hotels out at 09:11 IST. Both are connected again since 09:58 IST, and the three bookings made in between have reached your webhook. Write here if anything is still missing.",
+      "createdAt": "2026-11-22T04:31:40.000Z"
+     },
+     {
+      "id": 3312,
+      "author": "partner",
+      "body": "It started again at 14:20 IST on hotel 61 only.",
+      "createdAt": "2026-11-22T08:52:31.000Z"
+     }
+    ],
+    "diagnostic": {
+     "takenAt": "2026-11-22T04:05:12.000Z",
+     "windowHours": 24,
+     "requests": {
+      "refused": 3,
+      "byCode": [
+       {
+        "status": 429,
+        "errorCode": "RATE_LIMITED",
+        "count": 3,
+        "lastAt": "2026-11-22T03:58:40.000Z"
+       }
+      ],
+      "lastRefused": [
+       {
+        "requestId": "rq_mi8x3k2a9f2c1a7e",
+        "at": "2026-11-22T03:58:40.000Z",
+        "method": "PUT",
+        "route": "/rates",
+        "status": 429,
+        "errorCode": "RATE_LIMITED",
+        "propertyId": 61
+       }
+      ]
+     },
+     "hotels": [
+      {
+       "propertyId": 61,
+       "inventory": {
+        "pendingCells": 0,
+        "outOfSyncSince": null,
+        "lastOkAt": "2026-11-22T04:03:55.000Z"
+       },
+       "rates": {
+        "waitingCells": 0,
+        "refusedCells": 0,
+        "lastPushAt": "2026-11-22T03:59:02.000Z",
+        "lastErrorAt": null,
+        "consecutiveFailures": 0
+       },
+       "channelIssues": [
+        {
+         "event": "disconnect_channel",
+         "count": 1,
+         "since": "2026-11-22T03:41:18.000Z"
+        }
+       ],
+       "shield": {
+        "level": "CLEAR",
+        "until": null
+       },
+       "usage": {
+        "cellsChanged": 1138,
+        "refusals": 0,
+        "refusedByChannelManager": 0
+       }
+      }
+     ],
+     "hotelsNotShown": 0,
+     "partner": {
+      "shield": {
+       "level": "CLEAR",
+       "until": null
+      },
+      "usage": {
+       "cellsChanged": 20914,
+       "refusals": 0,
+       "refusedByChannelManager": 0
+      }
+     },
+     "webhooks": [
+      {
+       "endpointId": 7,
+       "status": "ACTIVE",
+       "consecutiveFailures": 0,
+       "failingSince": null,
+       "lastSuccessAt": "2026-11-22T03:39:50.000Z",
+       "lastFailureAt": null,
+       "deliveries": {
+        "delivered": 212,
+        "failed": 0,
+        "pending": 0
+       },
+       "lastFailed": []
+      }
+     ],
+     "incomplete": []
+    }
+   },
    "refusals": [
     {
      "status": 401,
@@ -4579,7 +5650,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -4604,8 +5675,33 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     200
    ],
    "idempotent": true,
-   "request": null,
-   "answer": null,
+   "request": {
+    "undo": false
+   },
+   "answer": {
+    "bookingId": 90312,
+    "reference": "SBX-9001-MXHIYLXC7B3E",
+    "channelBookingId": "sbx-7b3e94a1-0c5d-4f62-8e17-3a9d2c6b5f48",
+    "otaName": "Website",
+    "status": "UPCOMING",
+    "guestName": "Priya Nair",
+    "checkIn": "2026-12-24",
+    "checkOut": "2026-12-26",
+    "nights": 2,
+    "rooms": 1,
+    "roomTypeId": 412,
+    "nightlyRate": 4850,
+    "total": 9700,
+    "currency": "INR",
+    "paidByOta": true,
+    "oversold": false,
+    "createdAt": "2026-12-10T12:20:00.000Z",
+    "webhook": {
+     "eventType": "direct.booking.modified",
+     "queued": true
+    },
+    "stayStatus": "NOSHOW"
+   },
    "refusals": [
     {
      "status": 401,
@@ -4621,7 +5717,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -4648,7 +5744,17 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     "type": "channel.sync.alert",
     "event": "rate_error"
    },
-   "answer": null,
+   "answer": {
+    "event": "rate_error",
+    "channelId": "b53ff702-be2d-44ee-8a7e-d1153f096dba",
+    "channelKind": "BookingCom",
+    "raisedAt": "2026-12-10T12:30:00.000Z",
+    "resolvedAt": null,
+    "webhook": {
+     "eventType": "channel.sync.alert",
+     "queued": true
+    }
+   },
    "refusals": [
     {
      "status": 401,
@@ -4664,7 +5770,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -4725,7 +5831,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -4775,7 +5881,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    "idempotent": false,
    "request": null,
    "answer": {
-    "since": "2026-10-23T12:00:00.000Z",
+    "since": "2026-12-03T12:30:00.000Z",
     "items": [
      {
       "id": 100001,
@@ -4789,8 +5895,8 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
        "sourceGroup": "DIRECT"
       },
       "stay": {
-       "checkIn": "2026-11-13",
-       "checkOut": "2026-11-15",
+       "checkIn": "2026-12-24",
+       "checkOut": "2026-12-26",
        "nights": 2,
        "dayUse": false
       },
@@ -4812,12 +5918,12 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
        {
         "roomTypeId": 412,
         "ratePlanId": 901,
-        "roomTypeName": "Deluxe Sea View",
+        "roomTypeName": "Deluxe Garden Room",
         "mealPlan": "CP",
         "adults": 2,
         "children": 0,
-        "checkIn": "2026-11-13",
-        "checkOut": "2026-11-15",
+        "checkIn": "2026-12-24",
+        "checkOut": "2026-12-26",
         "nights": 2,
         "dayUse": false,
         "ratePerNight": 2700,
@@ -4834,12 +5940,12 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
       },
       "finance": null,
       "cancellation": null,
-      "createdAt": "2026-10-30T12:00:00.000Z",
-      "updatedAt": "2026-10-30T12:00:00.000Z"
+      "createdAt": "2026-12-10T12:00:00.000Z",
+      "updatedAt": "2026-12-10T12:00:00.000Z"
      }
     ],
     "more": false,
-    "nextCursor": "WyIyMDI2LTEwLTI0VDEwOjAwOjAwLjAwMFoiLDQxODJd"
+    "nextCursor": "WyIyMDI2LTEyLTEwVDEyOjAwOjAwLjAwMFoiLDEwMDAwMV0"
    },
    "refusals": [
     {
@@ -4856,7 +5962,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -4894,8 +6000,8 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      "sourceGroup": "DIRECT"
     },
     "stay": {
-     "checkIn": "2026-11-13",
-     "checkOut": "2026-11-15",
+     "checkIn": "2026-12-24",
+     "checkOut": "2026-12-26",
      "nights": 2,
      "dayUse": false
     },
@@ -4917,12 +6023,12 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      {
       "roomTypeId": 412,
       "ratePlanId": 901,
-      "roomTypeName": "Deluxe Sea View",
+      "roomTypeName": "Deluxe Garden Room",
       "mealPlan": "CP",
       "adults": 2,
       "children": 0,
-      "checkIn": "2026-11-13",
-      "checkOut": "2026-11-15",
+      "checkIn": "2026-12-24",
+      "checkOut": "2026-12-26",
       "nights": 2,
       "dayUse": false,
       "ratePerNight": 2700,
@@ -4939,8 +6045,8 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     "finance": null,
     "cancellation": null,
-    "createdAt": "2026-10-30T12:00:00.000Z",
-    "updatedAt": "2026-10-30T12:00:00.000Z"
+    "createdAt": "2026-12-10T12:00:00.000Z",
+    "updatedAt": "2026-12-10T12:00:00.000Z"
    },
    "refusals": [
     {
@@ -4957,7 +6063,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -4991,7 +6097,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      "id": 100001,
      "reference": "TEST-WEB-4H7P9D",
      "status": "CANCELLED",
-     "stayStatus": "UPCOMING",
+     "stayStatus": "CANCELLED",
      "channel": {
       "otaName": "Website",
       "otaReservationCode": "TEST-WEB-4H7P9D",
@@ -4999,8 +6105,8 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
       "sourceGroup": "DIRECT"
      },
      "stay": {
-      "checkIn": "2026-11-13",
-      "checkOut": "2026-11-15",
+      "checkIn": "2026-12-24",
+      "checkOut": "2026-12-26",
       "nights": 2,
       "dayUse": false
      },
@@ -5022,12 +6128,12 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
       {
        "roomTypeId": 412,
        "ratePlanId": 901,
-       "roomTypeName": "Deluxe Sea View",
+       "roomTypeName": "Deluxe Garden Room",
        "mealPlan": "CP",
        "adults": 2,
        "children": 0,
-       "checkIn": "2026-11-13",
-       "checkOut": "2026-11-15",
+       "checkIn": "2026-12-24",
+       "checkOut": "2026-12-26",
        "nights": 2,
        "dayUse": false,
        "ratePerNight": 2700,
@@ -5044,11 +6150,11 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
      },
      "finance": null,
      "cancellation": {
-      "at": "2026-10-31T09:15:00.000Z",
+      "at": "2026-12-11T09:15:00.000Z",
       "reason": "Cancelled by the hotel"
      },
-     "createdAt": "2026-10-30T12:00:00.000Z",
-     "updatedAt": "2026-10-30T12:00:00.000Z"
+     "createdAt": "2026-12-10T12:00:00.000Z",
+     "updatedAt": "2026-12-11T09:15:00.000Z"
     },
     "refund": {
      "requested": "policy",
@@ -5101,25 +6207,25 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     "bookings": [
      {
       "bookingId": 90311,
-      "reference": "SBX-9001-MH3K2Q7A",
+      "reference": "SBX-9001-MXHI8W001F6D",
       "channelBookingId": "sbx-1f6d0c2e-7b53-4a0e-9c5a-2d8f3b1e4c70",
       "otaName": "Booking.com",
       "status": "UPCOMING",
       "guestName": "Asha Verma",
-      "checkIn": "2026-12-05",
-      "checkOut": "2026-12-07",
+      "checkIn": "2026-12-24",
+      "checkOut": "2026-12-26",
       "nights": 2,
       "rooms": 1,
       "roomTypeId": 412,
-      "nightlyRate": 4500,
-      "total": 9000,
+      "nightlyRate": 4850,
+      "total": 9700,
       "currency": "INR",
       "paidByOta": false,
       "oversold": false,
-      "createdAt": "2026-10-30T12:00:00.000Z",
+      "createdAt": "2026-12-10T12:00:00.000Z",
       "webhook": {
        "eventType": "channel.booking.created",
-       "queued": true
+       "queued": false
       }
      }
     ]
@@ -5139,7 +6245,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -5164,7 +6270,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    "idempotent": true,
    "request": {
     "roomTypeId": 412,
-    "checkIn": "2026-12-05",
+    "checkIn": "2026-12-24",
     "nights": 2,
     "rooms": 1,
     "adults": 2,
@@ -5174,22 +6280,22 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    },
    "answer": {
     "bookingId": 90311,
-    "reference": "SBX-9001-MH3K2Q7A",
+    "reference": "SBX-9001-MXHI8W001F6D",
     "channelBookingId": "sbx-1f6d0c2e-7b53-4a0e-9c5a-2d8f3b1e4c70",
     "otaName": "Booking.com",
     "status": "UPCOMING",
     "guestName": "Asha Verma",
-    "checkIn": "2026-12-05",
-    "checkOut": "2026-12-07",
+    "checkIn": "2026-12-24",
+    "checkOut": "2026-12-26",
     "nights": 2,
     "rooms": 1,
     "roomTypeId": 412,
-    "nightlyRate": 4500,
-    "total": 9000,
+    "nightlyRate": 4850,
+    "total": 9700,
     "currency": "INR",
     "paidByOta": false,
     "oversold": false,
-    "createdAt": "2026-10-30T12:00:00.000Z",
+    "createdAt": "2026-12-10T12:00:00.000Z",
     "webhook": {
      "eventType": "channel.booking.created",
      "queued": true
@@ -5236,7 +6342,29 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": true,
    "request": null,
-   "answer": null,
+   "answer": {
+    "bookingId": 90311,
+    "reference": "SBX-9001-MXHI8W001F6D",
+    "channelBookingId": "sbx-1f6d0c2e-7b53-4a0e-9c5a-2d8f3b1e4c70",
+    "otaName": "Booking.com",
+    "status": "CANCELLED",
+    "guestName": "Asha Verma-Rao",
+    "checkIn": "2026-12-24",
+    "checkOut": "2026-12-27",
+    "nights": 3,
+    "rooms": 1,
+    "roomTypeId": 412,
+    "nightlyRate": 4966.67,
+    "total": 14900,
+    "currency": "INR",
+    "paidByOta": false,
+    "oversold": false,
+    "createdAt": "2026-12-10T12:00:00.000Z",
+    "webhook": {
+     "eventType": "channel.booking.cancelled",
+     "queued": true
+    }
+   },
    "refusals": [
     {
      "status": 401,
@@ -5281,7 +6409,29 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     "nights": 3,
     "guestName": "Asha Verma-Rao"
    },
-   "answer": null,
+   "answer": {
+    "bookingId": 90311,
+    "reference": "SBX-9001-MXHI8W001F6D",
+    "channelBookingId": "sbx-1f6d0c2e-7b53-4a0e-9c5a-2d8f3b1e4c70",
+    "otaName": "Booking.com",
+    "status": "UPCOMING",
+    "guestName": "Asha Verma-Rao",
+    "checkIn": "2026-12-24",
+    "checkOut": "2026-12-27",
+    "nights": 3,
+    "rooms": 1,
+    "roomTypeId": 412,
+    "nightlyRate": 4966.67,
+    "total": 14900,
+    "currency": "INR",
+    "paidByOta": false,
+    "oversold": false,
+    "createdAt": "2026-12-10T12:00:00.000Z",
+    "webhook": {
+     "eventType": "channel.booking.modified",
+     "queued": true
+    }
+   },
    "refusals": [
     {
      "status": 400,
@@ -5330,10 +6480,10 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    "answer": {
     "batchId": "7f1d2c4e-5a6b-4c8d-9e0f-112233445566",
     "resource": "rates",
-    "createdAt": "2026-10-12T09:14:03.201Z",
-    "requestedCells": 151,
-    "acceptedCells": 43,
-    "noopCells": 108,
+    "createdAt": "2026-12-01T09:14:03.201Z",
+    "requestedCells": 121,
+    "acceptedCells": 34,
+    "noopCells": 87,
     "rejected": [],
     "status": "pending",
     "pendingCells": 12,
@@ -5355,7 +6505,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -5432,7 +6582,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -5443,7 +6593,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
   {
    "key": "POST /connect-links",
    "summary": "Make a one-time connect link for one hotel and one booking site",
-   "description": "Scope channels:connect; a live key. The answer carries the link's url, shown once: send it to the hotel's own person, who connects the booking site on our hosted page. The body takes no OTA credential and no room match. A second link for the same hotel and booking site withdraws an earlier one nobody opened.",
+   "description": "Scope channels:connect; a live key. The answer carries the link's url, shown once, and hotelStep, what the hotel does at the booking site first (every booking site but Airbnb). Send hotelStep to the hotel first and the url once that step is done; the hotel's own person then types the hotel's id at the booking site on our hosted page, matches and starts selling. The body takes no booking-site detail and no room match. A second link for the same hotel and booking site withdraws an earlier one nobody opened.",
    "scope": "channels:connect",
    "call": "zs.connectLinks.create(body)",
    "also": [],
@@ -5564,7 +6714,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -5590,7 +6740,27 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": true,
    "request": null,
-   "answer": null,
+   "answer": {
+    "id": "3f2b6c1e-8a4d-4e7b-9c05-1d2e3f4a5b6c",
+    "propertyId": 61,
+    "channel": "bookingcom",
+    "channelName": "Booking.com",
+    "status": "revoked",
+    "createdAt": "2026-11-23T09:30:00.000Z",
+    "expiresAt": "2026-11-26T09:30:00.000Z",
+    "openedAt": null,
+    "connectedAt": null,
+    "completedAt": null,
+    "revokedAt": "2026-11-23T10:05:00.000Z",
+    "channelId": null,
+    "reference": "onboarding-4471",
+    "returnUrl": null,
+    "createdByKey": {
+     "id": 12,
+     "name": "Aarohan PMS, production",
+     "maskedKey": "zsk_live_aB3…"
+    }
+   },
    "refusals": [
     {
      "status": 401,
@@ -5606,7 +6776,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -5726,7 +6896,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -5847,7 +7017,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -5956,7 +7126,57 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    ],
    "idempotent": true,
    "request": null,
-   "answer": null,
+   "answer": {
+    "key": "zsk_live_…",
+    "view": {
+     "id": 88,
+     "propertyId": 61,
+     "name": "Aarohan PMS, The Lantern House",
+     "maskedKey": "zsk_live_Xr4…",
+     "mode": "live",
+     "status": "ACTIVE",
+     "scopes": [
+      "ari:read",
+      "ari:write",
+      "channel-bookings:read"
+     ],
+     "allowedCidrs": [
+      "203.0.113.0/24"
+     ],
+     "createdAt": "2026-11-24T08:00:00.000Z",
+     "lastUsedAt": null,
+     "lastUsedIp": null,
+     "expiresAt": null,
+     "retireAt": null,
+     "rotatedToId": null,
+     "revokedAt": null,
+     "revokedReason": null
+    },
+    "retired": {
+     "id": 87,
+     "propertyId": 61,
+     "name": "Aarohan PMS, The Lantern House",
+     "maskedKey": "zsk_live_Qm7…",
+     "mode": "live",
+     "status": "ACTIVE",
+     "scopes": [
+      "ari:read",
+      "ari:write",
+      "channel-bookings:read"
+     ],
+     "allowedCidrs": [
+      "203.0.113.0/24"
+     ],
+     "createdAt": "2026-11-23T12:45:00.000Z",
+     "lastUsedAt": "2026-11-24T07:59:12.000Z",
+     "lastUsedIp": "203.0.113.24",
+     "expiresAt": null,
+     "retireAt": "2026-11-25T08:00:00.000Z",
+     "rotatedToId": 88,
+     "revokedAt": null,
+     "revokedReason": null
+    }
+   },
    "refusals": [
     {
      "status": 401,
@@ -6001,7 +7221,30 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
    "request": {
     "reason": "The old server was switched off"
    },
-   "answer": null,
+   "answer": {
+    "id": 87,
+    "propertyId": 61,
+    "name": "Aarohan PMS, The Lantern House",
+    "maskedKey": "zsk_live_Qm7…",
+    "mode": "live",
+    "status": "REVOKED",
+    "scopes": [
+     "ari:read",
+     "ari:write",
+     "channel-bookings:read"
+    ],
+    "allowedCidrs": [
+     "203.0.113.0/24"
+    ],
+    "createdAt": "2026-11-23T12:45:00.000Z",
+    "lastUsedAt": "2026-11-24T07:59:12.000Z",
+    "lastUsedIp": "203.0.113.24",
+    "expiresAt": null,
+    "retireAt": null,
+    "rotatedToId": null,
+    "revokedAt": "2026-11-24T08:05:00.000Z",
+    "revokedReason": "The old server was switched off"
+   },
    "refusals": [
     {
      "status": 400,
@@ -6021,7 +7264,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
     },
     {
      "status": 409,
-     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on an ARI route its channel manager is off (CHANNEL_MANAGER_DISABLED), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
+     "description": "The property is deleted or demo (PROPERTY_UNAVAILABLE); on a channel-manager route its channel manager is off (CHANNEL_MANAGER_DISABLED; data.details.reason is not_on_channel_manager, a hotel never put on it: send its room types and rate plans or press Finish setup in the Channels app, or switched_off, which only the hotel's owner undoes), or, on a company key, its rates are not the source of truth (ARI_NOT_AUTHORITATIVE); on a booking route it has no PMS (PMS_NOT_AVAILABLE)"
     },
     {
      "status": 429,
@@ -6031,23 +7274,25 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
   }
  ],
  "types": {
-  "Error": "export interface Error {\n  statuscode: number;\n  /** Human-readable, may change; branch on data.code */\n  message: string;\n  data: {\n    code: \"API_KEY_INVALID\" | \"API_KEY_REVOKED\" | \"API_KEY_EXPIRED\" | \"CONNECT_API_NOT_CONFIGURED\" | \"IP_NOT_ALLOWED\" | \"SCOPE_MISSING\" | \"PROPERTY_UNAVAILABLE\" | \"CHANNEL_MANAGER_DISABLED\" | \"PMS_NOT_AVAILABLE\" | \"VALIDATION\" | \"RANGE_INVALID\" | \"HORIZON\" | \"TOO_MANY_UPDATES\" | \"TOO_MANY_CELLS\" | \"UNKNOWN_ROOM_TYPE\" | \"UNKNOWN_RATE_PLAN\" | \"CURRENCY_MISMATCH\" | \"RATE_LIMITED\" | \"NOTHING_ACCEPTED\" | \"BATCH_NOT_FOUND\" | \"IDEMPOTENCY_KEY_INVALID\" | \"IDEMPOTENCY_KEY_REUSED\" | \"IDEMPOTENCY_IN_FLIGHT\" | \"STAY_INVALID\" | \"UNKNOWN_ROOM_TYPE_FOR_PLAN\" | \"OCCUPANCY_EXCEEDED\" | \"NO_AVAILABILITY\" | \"EXTERNAL_REFERENCE_REUSED\" | \"PAYMENT_NOT_ALLOWED\" | \"PAYMENT_EXCEEDS_TOTAL\" | \"TAXES_NOT_CONFIGURED\" | \"TAXES_INSIDE_RATES\" | \"BOOKING_NOT_FOUND\" | \"BOOKING_NOT_CANCELLABLE\" | \"MODULE_NOT_ENTITLED\" | \"SANDBOX_ONLY\" | \"ROOM_TYPE_NOT_FOUND\" | \"RATE_PLAN_NOT_FOUND\" | \"CATALOG_CONFLICT\" | \"CATALOG_BUSY\" | \"CHANNEL_MANAGER_ERROR\" | \"WEBHOOK_ENDPOINT_NOT_FOUND\" | \"WEBHOOK_DELIVERY_NOT_FOUND\" | \"WEBHOOK_ENDPOINT_LIMIT\" | \"WEBHOOK_ENDPOINT_NOT_ACTIVE\" | \"WEBHOOK_ENDPOINT_SUSPENDED\" | \"WEBHOOK_PAYLOAD_EXPIRED\" | \"WEBHOOK_ACCESS_ENDED\" | \"WEBHOOKS_UNAVAILABLE\" | \"PROPERTY_REQUIRED\" | \"PROPERTY_NOT_FOUND\" | \"ARI_NOT_AUTHORITATIVE\" | \"ROUTE_NOT_FOUND\" | \"PAYLOAD_TOO_LARGE\" | \"AUTH_BACKEND_UNAVAILABLE\" | \"BOOKING_NOT_MODIFIABLE\" | \"SANDBOX_NOT_FOUND\" | \"SANDBOX_INCOMPLETE\" | \"WRITES_FROZEN\" | \"WRITES_SUSPENDED\" | \"SHIELD_UNAVAILABLE\" | \"CATALOG_LIMIT_REACHED\" | \"TOO_MANY_NEW_ENTITIES\" | \"RATE_OUT_OF_BAND\" | \"CHANNEL_NOT_FOUND\" | \"CHANNEL_SHARED\" | \"MODIFIER_OUT_OF_BAND\" | \"COMPANY_KEY_REQUIRED\" | \"BILLING_SETUP_REQUIRED\" | \"OWNER_HAS_ACCOUNT\" | \"SANDBOX_LIMIT\" | \"CONFIRMATION_MISMATCH\" | \"PROPERTY_NOT_REMOVABLE\" | \"PROPERTY_BUSY\" | \"PRICE_UNAVAILABLE\" | \"CONNECT_LINK_NOT_FOUND\" | \"CONNECT_LINKS_UNAVAILABLE\" | \"CHANNEL_NOT_AVAILABLE\" | \"LIVE_KEY_REQUIRED\" | \"NOT_READY\" | \"KEY_NOT_FOUND\" | \"KEY_LIMIT\" | \"KEY_REVOKED\" | \"KEY_ALREADY_ROTATING\" | \"SCOPES_INVALID\" | \"ALLOWED_CIDRS_INVALID\" | \"REASON_REQUIRED\" | \"SUPPORT_TICKET_NOT_FOUND\" | \"SUPPORT_TICKET_CLOSED\";\n    details?: unknown;\n  };\n}",
+  "Error": "export interface Error {\n  statuscode: number;\n  /** Human-readable, may change; branch on data.code */\n  message: string;\n  data: {\n    code: \"API_KEY_INVALID\" | \"API_KEY_REVOKED\" | \"API_KEY_EXPIRED\" | \"CONNECT_API_NOT_CONFIGURED\" | \"IP_NOT_ALLOWED\" | \"SCOPE_MISSING\" | \"PROPERTY_UNAVAILABLE\" | \"CHANNEL_MANAGER_DISABLED\" | \"PMS_NOT_AVAILABLE\" | \"VALIDATION\" | \"RANGE_INVALID\" | \"HORIZON\" | \"TOO_MANY_UPDATES\" | \"TOO_MANY_CELLS\" | \"UNKNOWN_ROOM_TYPE\" | \"UNKNOWN_RATE_PLAN\" | \"CURRENCY_MISMATCH\" | \"RATE_LIMITED\" | \"NOTHING_ACCEPTED\" | \"BATCH_NOT_FOUND\" | \"IDEMPOTENCY_KEY_INVALID\" | \"IDEMPOTENCY_KEY_REUSED\" | \"IDEMPOTENCY_IN_FLIGHT\" | \"STAY_INVALID\" | \"UNKNOWN_ROOM_TYPE_FOR_PLAN\" | \"OCCUPANCY_EXCEEDED\" | \"NO_AVAILABILITY\" | \"EXTERNAL_REFERENCE_REUSED\" | \"PAYMENT_NOT_ALLOWED\" | \"PAYMENT_EXCEEDS_TOTAL\" | \"TAXES_NOT_CONFIGURED\" | \"TAXES_INSIDE_RATES\" | \"BOOKING_NOT_FOUND\" | \"BOOKING_NOT_CANCELLABLE\" | \"MODULE_NOT_ENTITLED\" | \"SANDBOX_ONLY\" | \"ROOM_TYPE_NOT_FOUND\" | \"RATE_PLAN_NOT_FOUND\" | \"CATALOG_CONFLICT\" | \"CATALOG_BUSY\" | \"CHANNEL_MANAGER_ERROR\" | \"WEBHOOK_ENDPOINT_NOT_FOUND\" | \"WEBHOOK_DELIVERY_NOT_FOUND\" | \"WEBHOOK_ENDPOINT_LIMIT\" | \"WEBHOOK_ENDPOINT_NOT_ACTIVE\" | \"WEBHOOK_ENDPOINT_SUSPENDED\" | \"WEBHOOK_PAYLOAD_EXPIRED\" | \"WEBHOOK_ACCESS_ENDED\" | \"WEBHOOKS_UNAVAILABLE\" | \"PROPERTY_REQUIRED\" | \"PROPERTY_NOT_FOUND\" | \"ARI_NOT_AUTHORITATIVE\" | \"ROUTE_NOT_FOUND\" | \"PAYLOAD_TOO_LARGE\" | \"AUTH_BACKEND_UNAVAILABLE\" | \"BOOKING_NOT_MODIFIABLE\" | \"SANDBOX_NOT_FOUND\" | \"SANDBOX_INCOMPLETE\" | \"WRITES_FROZEN\" | \"WRITES_SUSPENDED\" | \"SHIELD_UNAVAILABLE\" | \"CATALOG_LIMIT_REACHED\" | \"TOO_MANY_NEW_ENTITIES\" | \"RATE_OUT_OF_BAND\" | \"CHANNEL_NOT_FOUND\" | \"CHANNEL_SHARED\" | \"MODIFIER_OUT_OF_BAND\" | \"COMPANY_KEY_REQUIRED\" | \"BILLING_SETUP_REQUIRED\" | \"OWNER_HAS_ACCOUNT\" | \"SANDBOX_LIMIT\" | \"CONFIRMATION_MISMATCH\" | \"PROPERTY_NOT_REMOVABLE\" | \"PROPERTY_NOT_CHANGEABLE\" | \"PROPERTY_BUSY\" | \"PRICE_UNAVAILABLE\" | \"CONNECT_LINK_NOT_FOUND\" | \"CONNECT_LINKS_UNAVAILABLE\" | \"CHANNEL_NOT_AVAILABLE\" | \"LIVE_KEY_REQUIRED\" | \"NOT_READY\" | \"KEY_NOT_FOUND\" | \"KEY_LIMIT\" | \"KEY_REVOKED\" | \"KEY_ALREADY_ROTATING\" | \"SCOPES_INVALID\" | \"ALLOWED_CIDRS_INVALID\" | \"REASON_REQUIRED\" | \"SUPPORT_TICKET_NOT_FOUND\" | \"SUPPORT_TICKET_CLOSED\";\n    details?: unknown;\n  };\n}",
   "Property": "export interface Property {\n  id: number;\n  name: string;\n  /** IANA; every date in this API is a calendar date in this zone */\n  timezone: string;\n  /** ISO 4217; every rate must be sent in it */\n  currency: string;\n  /** Digits after the decimal point this currency's prices carry (ISO 4217): 2 for rupees, euros and dollars, 0 for yen. Every amount this API reads back as a decimal string has exactly this many (§2.10) */\n  decimals?: number;\n  inventoryScope: \"PMS_CM\" | \"CM_ONLY\" | \"PMS_CUTOVER\" | \"OWNER_SITE\";\n  /** true when this key is a zsk_test_ key on the owner's sandbox: nothing you send reaches a channel, and POST /sandbox/bookings simulates an OTA booking */\n  sandbox: boolean;\n  /** last writable night = today + horizonDays */\n  horizonDays: number;\n  ariAuthoritative: boolean;\n  /** what THIS key may do: ari:read · ari:write · bookings:read · bookings:write · bookings:payments */\n  scopes: Array<string>;\n  products: {\n    /** the ARI routes need it */\n    channelManager: boolean;\n    /** the booking routes need it */\n    pms: boolean;\n  };\n  limits: {\n    requestsPerMinute: number;\n    writesPerMinute: number;\n    maxUpdatesPerRequest: number;\n    maxCellsPerRequest: number;\n    bookingsPerMinute: number;\n    /** Changed cells this property may take per clock hour (UTC), all its keys together. A cell that already holds the value sent is not counted */\n    cellsPerHour: number;\n    /** Changed cells this property may take per rolling 24 hours */\n    cellsPerDay: number;\n    /** Room types this property may hold */\n    maxRoomTypes: number;\n    /** Rate plans this property may hold */\n    maxRatePlans: number;\n    /** A vacation rental: rate plans this property may hold per room type, counted over the whole property. null on a hotel, where maxRatePlans is the rule */\n    ratePlansPerRoomType: number | null;\n    /** New room types or rate plans one request, and one minute, may create */\n    newEntitiesPerMinute: number;\n  };\n  /** What this property has used of its long budgets (§6.6) */\n  usage: {\n    /** Changed cells counted against cellsPerHour so far this clock hour */\n    cellsThisHour: number;\n    /** Changed cells counted against cellsPerDay over the last 24 hours */\n    cellsLast24h: number;\n  };\n  /** Where this integration stands with the channel shield. Reads and bookings are never affected */\n  shield: {\n    /** CLEAR nothing held against the integration · WATCH noted, nothing refused · PAUSED only writes that close inventory are accepted · SUSPENDED every write refused until ZimmerStack releases it */\n    level: \"CLEAR\" | \"WATCH\" | \"PAUSED\" | \"SUSPENDED\";\n    /** Why, when the level is not CLEAR */\n    reason: string | null;\n    /** When a pause ends on its own (ISO instant); null = until released, or not paused */\n    until: string | null;\n  };\n  sync: {\n    state: \"IN_SYNC\" | \"PENDING\" | \"OUT_OF_SYNC\" | \"DISABLED\";\n    pendingCells: number;\n  };\n}",
   "Limits": "export interface Limits {\n  /** ISO 8601 instant the windows were read */\n  asOf: string;\n  key: {\n    kind: \"hotel\" | \"company\";\n    mode: \"live\" | \"test\";\n    /** The hotel these budgets are for; null on a company key that named none */\n    propertyId: number | null;\n  };\n  /** The budgets the key guard and the routes measure: a minute, or a rolling day */\n  budgets: Array<{\n    /** The budget's name: data.scope on the 429 that names it */\n    scope: string;\n    /** Its name in the RateLimit-Policy / RateLimit headers; null when it is not reported there */\n    header: string | null;\n    /** Whose traffic is counted together */\n    per: string;\n    /** The window in words: 60 s sliding, one clock hour (UTC), rolling 24 hours */\n    window: string;\n    windowSeconds: number | null;\n    /** The most the window holds, for THIS key, property and company */\n    quota: number;\n    /** What is counted: requests, writes, cells, bookings… */\n    unit: string;\n    /** Counted in the window now; null when this route cannot read it */\n    used: number | null;\n    /** What is left; null with used */\n    remaining: number | null;\n    /** Seconds until it has room again when nothing is left; otherwise until the oldest counted item leaves the window. 0 when nothing is counted */\n    resetSeconds: number | null;\n    /** What is counted, in a sentence */\n    counts: string;\n  }>;\n  /** Where the integration stands and its long budgets; null on a company key that named no hotel */\n  shield: {\n    standing: {\n      level: \"CLEAR\" | \"WATCH\" | \"PAUSED\" | \"SUSPENDED\";\n      reason: string | null;\n      until: string | null;\n    };\n    /** The budgets over an hour and a day, with this property's own quotas */\n    budgets: Array<{\n      /** The budget's name: data.scope on the 429 that names it */\n      scope: string;\n      /** Its name in the RateLimit-Policy / RateLimit headers; null when it is not reported there */\n      header: string | null;\n      /** Whose traffic is counted together */\n      per: string;\n      /** The window in words: 60 s sliding, one clock hour (UTC), rolling 24 hours */\n      window: string;\n      windowSeconds: number | null;\n      /** The most the window holds, for THIS key, property and company */\n      quota: number;\n      /** What is counted: requests, writes, cells, bookings… */\n      unit: string;\n      /** Counted in the window now; null when this route cannot read it */\n      used: number | null;\n      /** What is left; null with used */\n      remaining: number | null;\n      /** Seconds until it has room again when nothing is left; otherwise until the oldest counted item leaves the window. 0 when nothing is counted */\n      resetSeconds: number | null;\n      /** What is counted, in a sentence */\n      counts: string;\n    }>;\n  } | null;\n  /** The most one request may carry, and the most of a thing that may exist */\n  caps: Array<{\n    scope: string;\n    per: string;\n    quota: number;\n    unit: string;\n    counts: string;\n  }>;\n  note: string;\n}",
-  "Catalog": "export interface Catalog {\n  /** ISO 4217; the property's, and the one every rate and booking is sent in */\n  currency: string;\n  /** Digits after the decimal point this currency's prices carry (§2.10) */\n  decimals?: number;\n  /** Every room type on the property, stable ids, in the order they were created */\n  roomTypes: Array<{\n    /** The number every availability write and every booking room names as roomTypeId */\n    id: number;\n    /** Your own id for it, when your system wrote it through PUT /catalog/room-types; null otherwise */\n    ref: string | null;\n    /** As the owner named it in ZimmerStack */\n    name: string;\n    /** Most adults one room takes; null = not set */\n    maxAdults: number | null;\n    /** Most children one room takes; null = not set */\n    maxChildren: number | null;\n    /** \"room\" unless the owner chose another kind of unit */\n    roomKind: string;\n    /** IN_SYNC the channel manager has it · PENDING / SENDING on its way · FAILED stopped retrying (the owner's screen offers Retry) · DRIFTED someone changed it inside the channel manager · NOT_LINKED saved here, never added there · DISABLED the property is not connected */\n    sync: \"IN_SYNC\" | \"PENDING\" | \"SENDING\" | \"FAILED\" | \"DRIFTED\" | \"NOT_LINKED\" | \"DISABLED\";\n  }>;\n  /** Every rate plan, each under one room type */\n  ratePlans: Array<{\n    /** The number rate and restriction writes name as ratePlanId; optional on a booking room */\n    id: number;\n    /** Your own id for it, when your system wrote it through PUT /catalog/rate-plans; null otherwise */\n    ref: string | null;\n    /** The room type this plan sells; a booking may only pair the two */\n    roomTypeId: number;\n    /** As the owner named it */\n    name: string;\n    /** EP room only · CP breakfast · MAP half board · AP full board; null = not set */\n    mealPlan: \"EP\" | \"CP\" | \"MAP\" | \"AP\" | null;\n    /** The occupancy this plan is priced for; null = any */\n    occupancy: number | null;\n    currency: string;\n    /** The plan's standing price in major units, as a decimal string with the currency's own decimals (\"4500.50\"): the same field PUT /catalog/rate-plans takes. null = it follows the room type's base rate */\n    defaultRate?: string | null;\n    /** false = a non-refundable plan */\n    refundable: boolean;\n    /** IN_SYNC the channel manager has it · PENDING / SENDING on its way · FAILED stopped retrying (the owner's screen offers Retry) · DRIFTED someone changed it inside the channel manager · NOT_LINKED saved here, never added there · DISABLED the property is not connected */\n    sync: \"IN_SYNC\" | \"PENDING\" | \"SENDING\" | \"FAILED\" | \"DRIFTED\" | \"NOT_LINKED\" | \"DISABLED\";\n  }>;\n}",
+  "Catalog": "export interface Catalog {\n  /** ISO 4217; the property's, and the one every rate and booking is sent in */\n  currency: string;\n  /** Digits after the decimal point this currency's prices carry (§2.10) */\n  decimals?: number;\n  /** Every room type on the property, stable ids, in the order they were created */\n  roomTypes: Array<{\n    /** The number every availability write and every booking room names as roomTypeId */\n    id: number;\n    /** Your own id for it, when your system wrote it through PUT /catalog/room-types; null otherwise */\n    ref: string | null;\n    /** As the owner named it in ZimmerStack */\n    name: string;\n    /** Most adults one room takes; null = not set */\n    maxAdults: number | null;\n    /** Most children one room takes; null = not set */\n    maxChildren: number | null;\n    /** \"room\" unless the owner chose another kind of unit */\n    roomKind: string;\n    /** IN_SYNC the channel manager has it · PENDING / SENDING on its way · FAILED stopped retrying (the owner's screen offers Retry) · DRIFTED someone changed it inside the channel manager · NOT_LINKED saved here, never added there · DISABLED the property is not connected */\n    sync: \"IN_SYNC\" | \"PENDING\" | \"SENDING\" | \"FAILED\" | \"DRIFTED\" | \"NOT_LINKED\" | \"DISABLED\";\n  }>;\n  /** Every rate plan, each under one room type */\n  ratePlans: Array<{\n    /** The number rate and restriction writes name as ratePlanId; optional on a booking room */\n    id: number;\n    /** Your own id for it, when your system wrote it through PUT /catalog/rate-plans; null otherwise */\n    ref: string | null;\n    /** The room type this plan sells; a booking may only pair the two */\n    roomTypeId: number;\n    /** As the owner named it */\n    name: string;\n    /** EP room only · CP breakfast · MAP half board · AP full board; null = not set */\n    mealPlan: \"EP\" | \"CP\" | \"MAP\" | \"AP\" | null;\n    /** The occupancy this plan is priced for; null = any */\n    occupancy: number | null;\n    currency: string;\n    /** The plan's standing price in major units, as a decimal string with the currency's own decimals (\"4500.50\"): the same field PUT /catalog/rate-plans takes, and the price every date of the plan opens for booking at. null = it follows the room type's base rate, which only a plan made on the hotel's own screens can do */\n    defaultRate?: string | null;\n    /** false = a non-refundable plan */\n    refundable: boolean;\n    /** IN_SYNC the channel manager has it · PENDING / SENDING on its way · FAILED stopped retrying (the owner's screen offers Retry) · DRIFTED someone changed it inside the channel manager · NOT_LINKED saved here, never added there · DISABLED the property is not connected */\n    sync: \"IN_SYNC\" | \"PENDING\" | \"SENDING\" | \"FAILED\" | \"DRIFTED\" | \"NOT_LINKED\" | \"DISABLED\";\n  }>;\n}",
   "Properties": "export interface Properties {\n  /** company: a software vendor's key, the hotel named in X-ZS-Property on every request. property: one hotel's own key, no header needed. */\n  keyKind: \"company\" | \"property\";\n  /** A company key: every property it may act on. A hotel key: its one property. */\n  properties: Array<{\n    /** The id a company key names in the X-ZS-Property header */\n    id: number;\n    name: string;\n    timezone: string;\n    currency: string;\n    /** The property publishes to its channels */\n    channelManager: boolean;\n    /** A sandbox: everything lands locally, nothing reaches a channel */\n    sandbox: boolean;\n  }>;\n}",
   "PropertyCreate": "export interface PropertyCreate {\n  /** The hotel's name, as its guests know it */\n  name: string;\n  /** The person who owns the hotel's account */\n  owner: {\n    name: string;\n    /** The owner's own address. The sign-in details are sent here, never to you */\n    email: string;\n    /** Digits, with an optional + and spaces, dots, dashes or brackets */\n    phone: string;\n  };\n  address: {\n    line1: string;\n    city: string;\n    state?: string;\n    postalCode?: string;\n    /** ISO 3166-1 alpha-2, for example IN, LK, PT */\n    country: string;\n  };\n  /** ISO 4217: what the hotel sells in. Default: the country's own currency. A hotel in India sells in INR */\n  currency?: string;\n  /** An IANA zone of the hotel's country. Default: the country's main zone */\n  timezone?: string;\n  /** India only: the hotel's GSTIN when it is registered under GST. Leave it out when it is not, and for a hotel in any other country */\n  taxId?: string;\n  /** At least one. Each is born with one room-only rate plan at its defaultRate */\n  roomTypes: Array<{\n    /** Your own id for this room type. Send the same ref to PUT /catalog/room-types later and it updates this one instead of making a second */\n    ref?: string;\n    /** Shown to the owner and sent to the channel manager as the title; each name once per request */\n    name: string;\n    /** Sellable rooms of this type */\n    roomCount: number;\n    /** Most adults one room takes; default 2 */\n    adults?: number;\n    /** The nightly price new dates open at, in MAJOR units of the hotel's currency (e.g. 4500 or \"4500.00\") */\n    defaultRate: number | string;\n  }>;\n}",
-  "PropertyCreated": "export interface PropertyCreated {\n  /** The id your company key names in the X-ZS-Property header from now on */\n  id: number;\n  /** As stored. A sandbox's name ends in (sandbox) and is at most 60 characters */\n  name: string;\n  timezone: string;\n  currency: string;\n  /** The property publishes to its channels. false for a new hotel until your first PUT /catalog/room-types puts it on the channel manager; always true for a sandbox */\n  channelManager: boolean;\n  /** true when a test key made it: everything lands locally, nothing reaches a channel and nothing is billed */\n  sandbox: boolean;\n  billing: {\n    /** ACTIVE: its billing has started, it is on your next monthly invoice · WAITING: the hotel is live, its billing has not started yet · NOT_BILLED: a sandbox */\n    state: \"ACTIVE\" | \"WAITING\" | \"NOT_BILLED\";\n    /** Why billing waits; null otherwise. SETUP: your billing setup is not complete · OVERDUE: one of your invoices is overdue · UNPAID_LIMIT: you have added as many hotels as you may before your first paid invoice · REVIEW: ZimmerStack starts it */\n    reason: \"SETUP\" | \"OVERDUE\" | \"UNPAID_LIMIT\" | \"REVIEW\" | null;\n    /** The same in one sentence, with what to do next; may change, branch on state and reason */\n    message: string;\n  };\n  /** true: an earlier request with this X-Idempotency-Key already added this hotel; nothing new was made */\n  replay: boolean;\n}",
+  "PropertyCreated": "export interface PropertyCreated {\n  /** The id your company key names in the X-ZS-Property header from now on */\n  id: number;\n  /** As stored. A sandbox's name ends in (sandbox) and is at most 60 characters */\n  name: string;\n  timezone: string;\n  currency: string;\n  /** The property publishes to its channels. A new hotel is put on the channel manager when its billing starts, usually before this answer; while it is false, PUT /catalog/room-types with the same refs tries again. Always true for a sandbox */\n  channelManager: boolean;\n  /** true when a test key made it: everything lands locally, nothing reaches a channel and nothing is billed */\n  sandbox: boolean;\n  billing: {\n    /** ACTIVE: its billing has started, it is on your next monthly invoice · WAITING: the hotel is live, its billing has not started yet · NOT_BILLED: a sandbox */\n    state: \"ACTIVE\" | \"WAITING\" | \"NOT_BILLED\";\n    /** Why billing waits; null otherwise. SETUP: your billing setup is not complete · OVERDUE: one of your invoices is overdue · UNPAID_LIMIT: you have added as many hotels as you may before your first paid invoice · REVIEW: ZimmerStack starts it */\n    reason: \"SETUP\" | \"OVERDUE\" | \"UNPAID_LIMIT\" | \"REVIEW\" | null;\n    /** The same in one sentence, with what to do next; may change, branch on state and reason */\n    message: string;\n  };\n  /** true: an earlier request with this X-Idempotency-Key already added this hotel; nothing new was made */\n  replay: boolean;\n}",
+  "PropertyChange": "export interface PropertyChange {\n  /** The hotel's new name, as its guests know it. A sandbox's name keeps its ending, (sandbox) */\n  name?: string;\n  /** Only the parts you send change. The country is not one of them: it never changes by this request */\n  address?: {\n    /** The first line of the address */\n    line1?: string;\n    city?: string;\n    /** An empty string clears it */\n    state?: string;\n    /** An empty string clears it */\n    postalCode?: string;\n  };\n}",
+  "PropertyChanged": "export interface PropertyChanged {\n  id: number;\n  /** As stored now. A sandbox's name ends in (sandbox) */\n  name: string;\n  timezone: string;\n  currency: string;\n  /** The property publishes to its channels. Not changed by this request */\n  channelManager: boolean;\n  sandbox: boolean;\n  /** The hotel's address as stored now. A part the record does not hold is null */\n  address: {\n    line1: string | null;\n    city: string | null;\n    state: string | null;\n    postalCode: string | null;\n    /** ISO 3166-1 alpha-2. Never changed by this request */\n    country: string | null;\n  };\n  /** The fields whose stored value this request changed, by the names you send (name, address.line1, address.city, address.state, address.postalCode). Empty when everything you sent was already stored */\n  changed: Array<string>;\n}",
   "PropertyRemoved": "export interface PropertyRemoved {\n  id: number;\n  /** The hotel's name; null only for a sandbox removed before its name was recorded */\n  name: string | null;\n  removed: true;\n  /** true: it was already removed before this request; the rest of the answer is where it stands now */\n  replay: boolean;\n  sandbox: boolean;\n  /** Nobody signs in to the hotel's account any more and no key reaches it */\n  access: \"CLOSED\";\n  billing: {\n    /** CANCELLED: the hotel's subscription is cancelled · NOT_BILLED: a sandbox, never billed */\n    state: \"CANCELLED\" | \"NOT_BILLED\";\n    /** ISO 8601 instant the subscription was cancelled; null for a sandbox */\n    cancelledAt: string | null;\n  };\n  channelManager: {\n    /** REMOVED: its channel connections, rate plans, room types and listing are gone from the channel manager · RETRYING: a step is still pending; ZimmerStack retries it and nothing is needed from you · NOT_CONNECTED: it was never on the channel manager */\n    state: \"REMOVED\" | \"RETRYING\" | \"NOT_CONNECTED\";\n    /** While RETRYING, the step that is pending, in the order they run: the channel connections, then the rate plans, then the room types, then the property. null otherwise, and on a replay */\n    step: \"CHANNELS\" | \"RATE_PLANS\" | \"ROOM_TYPES\" | \"PROPERTY\" | null;\n    /** While RETRYING, what was still on the channel manager when this request ended; null otherwise, and on a replay */\n    stillConnected: {\n      channels: number;\n      ratePlans: number | null;\n      roomTypes: number | null;\n      property: boolean;\n    } | null;\n  };\n}",
   "RoomTypesUpsert": "export interface RoomTypesUpsert {\n  /** Each ref once per request */\n  roomTypes: Array<{\n    /** Your own id for this entity: the upsert key, stable across sends (1–64 of A–Z a–z 0–9 . _ : -) */\n    ref: string;\n    /** Shown to the owner and sent to the channel manager as the title */\n    name: string;\n    /** Sellable rooms of this type. On a channel-manager-only hotel a later change is written too, to the channel manager first; a count below the rooms holding upcoming stays is refused. The count does not cap a night: an availability above it is accepted with a warning, reaches the booking sites, and is what a price by rooms counts for that month. On a hotel that runs our PMS the count comes from its room list and a different value is not written (the answer's notice says so) */\n    roomCount: number;\n    /** Most adults one room takes */\n    adults: number;\n    /** Most children one room takes; default 0 */\n    children?: number;\n  }>;\n}",
-  "RatePlansUpsert": "export interface RatePlansUpsert {\n  /** Each ref once per request */\n  ratePlans: Array<{\n    /** Your own id for this entity: the upsert key, stable across sends (1–64 of A–Z a–z 0–9 . _ : -) */\n    ref: string;\n    /** The room type this plan sells (GET /catalog); or name it by roomTypeRef */\n    roomTypeId?: number;\n    /** The room type by the ref you gave it, in this request or an earlier one */\n    roomTypeRef?: string;\n    /** Shown to the owner and sent to the channel manager as the title */\n    name: string;\n    /** EP room only · CP breakfast · MAP half board · AP full board; null = not set */\n    mealPlan?: \"EP\" | \"CP\" | \"MAP\" | \"AP\" | null;\n    /** The occupancy this plan is priced for; null = the room type's default */\n    occupancy?: number | null;\n    /** false = a non-refundable plan; default true */\n    refundable?: boolean;\n    /** The plan's standing price in MAJOR units, a number or a decimal string (4500 or \"4500.50\"), like every rate here: what new dates open at, mirrored to the channel manager. Kept to the currency's own decimals (§2.10). Omit to leave it; null = follow the room type's base rate */\n    defaultRate?: number | string | null;\n    /** Deprecated: the same standing price in hundredths of the major unit (450050 is 4500.50). Send defaultRate instead; never both */\n    defaultRateMinor?: number | null;\n  }>;\n}",
+  "RatePlansUpsert": "export interface RatePlansUpsert {\n  /** Each ref once per request */\n  ratePlans: Array<{\n    /** Your own id for this entity: the upsert key, stable across sends (1–64 of A–Z a–z 0–9 . _ : -) */\n    ref: string;\n    /** The room type this plan sells (GET /catalog); or name it by roomTypeRef */\n    roomTypeId?: number;\n    /** The room type by the ref you gave it, in this request or an earlier one */\n    roomTypeRef?: string;\n    /** Shown to the owner and sent to the channel manager as the title */\n    name: string;\n    /** EP room only · CP breakfast · MAP half board · AP full board; null = not set */\n    mealPlan?: \"EP\" | \"CP\" | \"MAP\" | \"AP\" | null;\n    /** The occupancy this plan is priced for; null = the room type's default */\n    occupancy?: number | null;\n    /** false = a non-refundable plan; default true */\n    refundable?: boolean;\n    /** The plan's standing price in MAJOR units, a number or a decimal string (4500 or \"4500.50\"), like every rate here: what every date of the plan opens for booking at, mirrored to the channel manager. REQUIRED when the plan is new: a request that would create a plan without it is 400 VALIDATION and writes nothing. On a plan you already sent, omit it to leave the price as it is. null (follow the room type's base rate) is accepted only where the hotel has typed a base rate in ZimmerStack, and is 400 VALIDATION otherwise. Kept to the currency's own decimals (§2.10) */\n    defaultRate?: number | string | null;\n    /** Deprecated: the same standing price in hundredths of the major unit (450050 is 4500.50). Send defaultRate instead; never both */\n    defaultRateMinor?: number | null;\n  }>;\n}",
   "CatalogUpsertResult": "export interface CatalogUpsertResult {\n  /** One per entity sent, in the order sent */\n  items: Array<{\n    ref: string;\n    /** The ZimmerStack id: what every availability, rate and booking write names from now on */\n    id: number;\n    /** created: new here and on the channel manager · updated: fields changed · adopted: an entity the owner had already made with this name is now yours by ref · unchanged: nothing differed */\n    action: \"created\" | \"updated\" | \"adopted\" | \"unchanged\";\n    /** IN_SYNC the channel manager has it · PENDING / SENDING on its way · FAILED stopped retrying (the owner's screen offers Retry) · DRIFTED someone changed it inside the channel manager · NOT_LINKED saved here, never added there · DISABLED the property is not connected */\n    sync: \"IN_SYNC\" | \"PENDING\" | \"SENDING\" | \"FAILED\" | \"DRIFTED\" | \"NOT_LINKED\" | \"DISABLED\";\n    /** Saved, but something to know (for example the property is not on the channel manager yet); null when nothing */\n    notice: string | null;\n  }>;\n  /** Where the property stands after this write; a sandbox always says enabled */\n  channelManager: {\n    /** The property publishes to its channels */\n    enabled: boolean;\n    /** Why not, when enabled is false (for example: a room type still has no rate plan) */\n    reason: string | null;\n  };\n  /** Standing prices this request sent that could not be kept exactly as sent, each with what was kept and why (§2.10). Absent when every price was kept as sent */\n  rounded?: Array<{\n    /** Where in the request the amount sat, for example \"updates[3].rate\" */\n    field: string;\n    /** The amount as it was sent */\n    sent: string;\n    /** The amount as it is kept, in major units with the currency's own decimals */\n    kept: string;\n    /** Why, in a sentence; may change, do not branch on it */\n    reason: string;\n  }>;\n}",
   "CatalogDeleteResult": "export interface CatalogDeleteResult {\n  id: number;\n  deleted: true;\n  /** The channel manager's copy is gone too (a sandbox has none) */\n  channelManagerDeleted: boolean;\n  /** For a room type: the plans that went with it */\n  deletedRatePlanIds: Array<number>;\n}",
   "RangeQuery": "export interface RangeQuery {\n  /** default: today in the property's timezone */\n  from?: string;\n  /** default: from + 30 days; at most 500 days after from */\n  to?: string;\n}",
   "AvailabilityRead": "export interface AvailabilityRead {\n  /** Hotel-local calendar date, YYYY-MM-DD */\n  from: string;\n  /** Hotel-local calendar date, YYYY-MM-DD */\n  to: string;\n  cells: Array<{\n    roomTypeId: number;\n    /** Hotel-local calendar date, YYYY-MM-DD */\n    date: string;\n    available: number;\n  }>;\n}",
   "AvailabilityWrite": "export interface AvailabilityWrite {\n  updates: Array<{\n    /** ZimmerStack room type id (GET /catalog) */\n    roomTypeId: number;\n    /** Hotel-local calendar date, YYYY-MM-DD */\n    dateFrom: string;\n    /** Hotel-local calendar date, YYYY-MM-DD */\n    dateTo: string;\n    /** ABSOLUTE count of rooms of this type for sale on each night of the range */\n    available: number;\n  }>;\n  /** true: decide everything a real write decides (what would change, what is unchanged, what is held, what would be refused, the notices) and write nothing. Answers 200 with the preview instead of 202. Default false */\n  dryRun?: boolean;\n}",
   "RatesRead": "export interface RatesRead {\n  /** Hotel-local calendar date, YYYY-MM-DD */\n  from: string;\n  /** Hotel-local calendar date, YYYY-MM-DD */\n  to: string;\n  /** ISO 4217: the property's currency, the one every rate here is in */\n  currency: string;\n  /** Digits after the decimal point this currency's prices carry (ISO 4217): 2, 0 or 3 (§2.10) */\n  decimals?: number;\n  cells: Array<{\n    ratePlanId: number;\n    /** Hotel-local calendar date, YYYY-MM-DD */\n    date: string;\n    /** The price in MAJOR units, as a decimal string with the currency's own decimals: \"4500.50\" in rupees, \"4500\" in yen. The same value PUT /rates takes */\n    rate?: string;\n    /** The same price in HUNDREDTHS of the major unit (450050 is 4500.50), for every currency. That is the ISO 4217 minor unit only where the currency has two decimals: prefer rate */\n    rateMinor: number;\n    source: \"MANUAL\" | \"BASE\" | \"ENGINE\" | \"CHANNEX_SEED\" | \"PLAN_DEFAULT\" | \"STANDING\";\n  }>;\n}",
-  "RatesWrite": "export interface RatesWrite {\n  updates: Array<{\n    /** ZimmerStack rate plan id (GET /catalog) */\n    ratePlanId: number;\n    /** Hotel-local calendar date, YYYY-MM-DD */\n    dateFrom: string;\n    /** Hotel-local calendar date, YYYY-MM-DD */\n    dateTo: string;\n    days?: Array<\"mo\" | \"tu\" | \"we\" | \"th\" | \"fr\" | \"sa\" | \"su\">;\n    /** Nightly sell price in MAJOR units, a number or a decimal string (4500, 4500.5 or \"4500.50\"), 1 to 21474836. Kept exactly, to the currency's own decimals (GET /property decimals): two for rupees, euros and dollars, none for yen. A price with more decimals than the currency has, a number or a decimal string alike, is rounded to them and named in the answer's rounded list */\n    rate: number | string;\n    /** ISO 4217; must equal the property's currency (GET /property) */\n    currency: string;\n  }>;\n  /** true: decide everything a real write decides (what would change, what is unchanged, what is held, what would be refused, the notices) and write nothing. Answers 200 with the preview instead of 202. Default false */\n  dryRun?: boolean;\n}",
+  "RatesWrite": "export interface RatesWrite {\n  updates: Array<{\n    /** ZimmerStack rate plan id (GET /catalog) */\n    ratePlanId: number;\n    /** Hotel-local calendar date, YYYY-MM-DD */\n    dateFrom: string;\n    /** Hotel-local calendar date, YYYY-MM-DD */\n    dateTo: string;\n    days?: Array<\"mo\" | \"tu\" | \"we\" | \"th\" | \"fr\" | \"sa\" | \"su\">;\n    /** Nightly sell price in MAJOR units, a number or a decimal string (4500, 4500.5 or \"4500.50\"), 1 to 21474836. Kept exactly, to the currency's own decimals (GET /property decimals): two for rupees, euros and dollars, none for yen. A number with more decimals than the currency has is rounded to them and named in the answer's rounded list; so is a fraction in a currency that has none. A decimal string takes at most two decimals: one with more is refused (400 VALIDATION) */\n    rate: number | string;\n    /** ISO 4217; must equal the property's currency (GET /property) */\n    currency: string;\n  }>;\n  /** true: decide everything a real write decides (what would change, what is unchanged, what is held, what would be refused, the notices) and write nothing. Answers 200 with the preview instead of 202. Default false */\n  dryRun?: boolean;\n}",
   "RestrictionsRead": "export interface RestrictionsRead {\n  /** Hotel-local calendar date, YYYY-MM-DD */\n  from: string;\n  /** Hotel-local calendar date, YYYY-MM-DD */\n  to: string;\n  cells: Array<{\n    ratePlanId: number;\n    /** Hotel-local calendar date, YYYY-MM-DD */\n    date: string;\n    stopSell: boolean | null;\n    closedToArrival: boolean | null;\n    closedToDeparture: boolean | null;\n    minStayArrival: number | null;\n    minStayThrough: number | null;\n    maxStay: number | null;\n  }>;\n}",
   "RestrictionsWrite": "export interface RestrictionsWrite {\n  updates: Array<{\n    /** ZimmerStack rate plan id (GET /catalog) */\n    ratePlanId: number;\n    /** Hotel-local calendar date, YYYY-MM-DD */\n    dateFrom: string;\n    /** Hotel-local calendar date, YYYY-MM-DD */\n    dateTo: string;\n    days?: Array<\"mo\" | \"tu\" | \"we\" | \"th\" | \"fr\" | \"sa\" | \"su\">;\n    stopSell?: boolean;\n    closedToArrival?: boolean;\n    closedToDeparture?: boolean;\n    minStayArrival?: number;\n    minStayThrough?: number;\n    maxStay?: number;\n  }>;\n  /** true: decide everything a real write decides (what would change, what is unchanged, what is held, what would be refused, the notices) and write nothing. Answers 200 with the preview instead of 202. Default false */\n  dryRun?: boolean;\n}",
   "WriteAccepted": "export interface WriteAccepted {\n  batchId: string;\n  resource: \"availability\" | \"rates\" | \"restrictions\";\n  /** distinct cells after per-request coalescing (last write wins) */\n  requestedCells: number;\n  /** cells that differed from our record and were written; they will be pushed */\n  acceptedCells: number;\n  /** cells that already held the requested value; nothing written, nothing pushed */\n  noopCells: number;\n  /** groups our record refused (e.g. a plan whose policy forbids exceptions) */\n  rejected: Array<{\n    cells: number;\n    error: string;\n  }>;\n  pushedBy: \"inventory-drain\" | \"ari-projector\";\n  /** GET path to watch this batch land */\n  poll: string;\n  /** Accepted, but worth a look: an availability above the room type's room count (an oversell the channels will sell). Absent when there is nothing to say */\n  warnings?: Array<{\n    roomTypeId: number;\n    /** Rooms of this type in our record */\n    units: number;\n    /** The highest count this request set for it */\n    requested: number;\n    message: string;\n  }>;\n  /** Accepted, but far outside the plan's standing price, on a property whose price band only warns (§6.6). At most 20; absent when there is nothing to say */\n  priceWarnings?: Array<{\n    ratePlanId: number;\n    /** Hotel-local calendar date, YYYY-MM-DD */\n    date: string;\n    /** The price this request set, in hundredths of the major unit */\n    rateMinor: number;\n    /** The plan's standing price, in hundredths of the major unit */\n    standingMinor: number;\n    /** The same price in major units, as a decimal string (\"4500.50\") */\n    rate?: string;\n    /** The plan's standing price in major units, as a decimal string */\n    standing?: string;\n    message: string;\n  }>;\n  /** Prices this request sent that could not be kept exactly as sent, each with what was kept and why (§2.10): more decimals than the currency has, or a fraction in a currency that has none. At most 20; absent when every price was kept as sent */\n  rounded?: Array<{\n    /** Where in the request the amount sat, for example \"updates[3].rate\" */\n    field: string;\n    /** The amount as it was sent */\n    sent: string;\n    /** The amount as it is kept, in major units with the currency's own decimals */\n    kept: string;\n    /** Why, in a sentence; may change, do not branch on it */\n    reason: string;\n  }>;\n  /** How many of the request's prices were rounded in all; present with rounded */\n  roundedCount?: number;\n  /** true when the write was taken through the safety lane: the integration is paused or over a budget, and this write only closed inventory (§6.6) */\n  lane?: boolean;\n  /** true on PUT /rates and PUT /restrictions for a hotel that is not live yet (§2.15): the values are in our record and are pushed when the hotel goes live (POST /go-live), not before. Absent on a live hotel, and on PUT /availability: a room count is sent at once, live or not */\n  heldUntilGoLive?: boolean;\n  /** What this write did not do, or will not go on doing, one plain sentence each with a stable code and what to do (§2.20). Warnings first. At most 20; absent when there is nothing to say */\n  notices?: Array<{\n    /** Stable: branch on it. A code you do not know is a notice added later; show its message */\n    code: \"NOT_SOURCE_OF_TRUTH\" | \"ROOM_TYPE_NOT_LINKED\" | \"PLAN_NOT_LINKED\" | \"PLAN_NOT_MAPPED\" | \"ROOM_STILL_ON_SALE\" | \"OTA_LINKED_RATES_NOT_REACHED\" | \"STAY_RULES_FROM_ANOTHER_PLAN\" | \"PER_OTA_PLANS_FOLLOW\" | \"PER_OTA_PLAN_FOLLOWS_PARENT\" | \"VALUE_HELD\" | \"COUNT_WAS_REFUSED\" | \"COUNT_ZERO_IS_NOT_STOP_SELL\" | \"STOP_SELL_IS_NOT_A_COUNT\" | \"COUNT_OPEN_BUT_PLANS_STOPPED\" | \"NEW_DATES_OPEN_CLOSED\" | \"FAR_NIGHTS_NEED_A_COUNT\" | \"ENGINE_WILL_REPRICE\" | \"ENGINE_WILL_RECOUNT\" | \"DRIFT_REPAIR_OFF\";\n    /** warning: our record shows what you sent does not do the whole job (something still sells, nothing is sent, a rule will undo it) · info: how it works, said so the next surprise is not one */\n    level: \"warning\" | \"info\";\n    /** What is going on, in a sentence a person can read; may change, do not branch on it */\n    message: string;\n    /** What to do about it, naming the call */\n    action: string;\n    /** The room type it is about */\n    roomTypeId?: number;\n    /** The rate plans it is about (the ones you wrote) */\n    ratePlanIds?: Array<number>;\n    /** Other plans it names: the ones still selling, the plan that carries the star, the per-OTA plans */\n    otherRatePlanIds?: Array<number>;\n    /** The connected channels it is about */\n    channels?: Array<{\n      channelId: string;\n      /** BookingCom, Expedia, Agoda, Goibibo, AirBNB, … */\n      kind: string;\n    }>;\n    /** The first night it is about */\n    dateFrom?: string;\n    /** The last night it is about */\n    dateTo?: string;\n    /** How many nights between dateFrom and dateTo it is about (they need not be consecutive) */\n    nights?: number;\n  }>;\n  /** How many more notices there were past the 20 listed; present only when some were left out */\n  noticesOmitted?: number;\n}",
@@ -6088,7 +7333,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
   "WebhookRecoverResult": "export interface WebhookRecoverResult {\n  /** Failed deliveries queued again */\n  reset: number;\n  /** Events that had no delivery and now have one */\n  created: number;\n  scanned: number;\n  /** More events than one run queues: run it again for the rest */\n  truncated: boolean;\n}",
   "WebhookDeliveryList": "export interface WebhookDeliveryList {\n  items: Array<{\n    id: string;\n    eventId: string;\n    eventType: string;\n    mode: \"LIVE\" | \"TEST\";\n    status: \"PENDING\" | \"DELIVERED\" | \"FAILED\";\n    attempts: number;\n    nextAttemptAt: string;\n    lastError: string | null;\n    occurredAt: string;\n    deliveredAt: string | null;\n    createdAt: string;\n    payloadBytes: number;\n    /** false once the stored body has been dropped (14 days); a redeliver rebuilds it from the event while that is kept (90 days) */\n    payloadAvailable: boolean;\n  }>;\n  nextCursor: string | null;\n}",
   "WebhookDelivery": "export interface WebhookDelivery {\n  id: string;\n  eventId: string;\n  eventType: string;\n  mode: \"LIVE\" | \"TEST\";\n  status: \"PENDING\" | \"DELIVERED\" | \"FAILED\";\n  attempts: number;\n  nextAttemptAt: string;\n  lastError: string | null;\n  occurredAt: string;\n  deliveredAt: string | null;\n  createdAt: string;\n  payloadBytes: number;\n  /** false once the stored body has been dropped (14 days); a redeliver rebuilds it from the event while that is kept (90 days) */\n  payloadAvailable: boolean;\n}",
-  "WebhookDeliveryDetail": "export interface WebhookDeliveryDetail {\n  id: string;\n  eventId: string;\n  eventType: string;\n  mode: \"LIVE\" | \"TEST\";\n  status: \"PENDING\" | \"DELIVERED\" | \"FAILED\";\n  attempts: number;\n  nextAttemptAt: string;\n  lastError: string | null;\n  occurredAt: string;\n  deliveredAt: string | null;\n  createdAt: string;\n  payloadBytes: number;\n  /** false once the stored body has been dropped (14 days); a redeliver rebuilds it from the event while that is kept (90 days) */\n  payloadAvailable: boolean;\n  /** The event as it was sent (the webhook's envelope); null once the stored body has been dropped (payloadAvailable: false) */\n  payload: unknown;\n  /** Every attempt, oldest first */\n  attempts_log: Array<{\n    id: string;\n    /** 1 for the first send, one more for each retry */\n    attemptNo: number;\n    startedAt: string;\n    durationMs: number;\n    /** SUCCESS, HTTP_ERROR, TIMEOUT, CONNECTION_ERROR, TLS_ERROR or BLOCKED_URL; more may come */\n    outcome: string;\n    /** The HTTP status your receiver answered; null when it never answered */\n    responseStatus: number | null;\n    /** The first 2 KB of what your receiver answered */\n    responseBodySnippet: string | null;\n    errorMessage: string | null;\n    /** The address your URL resolved to for this attempt */\n    resolvedIp: string | null;\n  }>;\n  request: {\n    /** The headers the delivery carried; the timestamp and the signature are shown as placeholders */\n    headers: Record<string, string>;\n  };\n}",
+  "WebhookDeliveryDetail": "export interface WebhookDeliveryDetail {\n  id: string;\n  eventId: string;\n  eventType: string;\n  mode: \"LIVE\" | \"TEST\";\n  status: \"PENDING\" | \"DELIVERED\" | \"FAILED\";\n  attempts: number;\n  nextAttemptAt: string;\n  lastError: string | null;\n  occurredAt: string;\n  deliveredAt: string | null;\n  createdAt: string;\n  payloadBytes: number;\n  /** false once the stored body has been dropped (14 days); a redeliver rebuilds it from the event while that is kept (90 days) */\n  payloadAvailable: boolean;\n  /** The event as it was sent (the webhook's envelope), with a guest's phone and email masked in this read; null once the stored body has been dropped (payloadAvailable: false) */\n  payload: unknown;\n  /** Every attempt, oldest first */\n  attempts_log: Array<{\n    id: string;\n    /** 1 for the first send, one more for each retry */\n    attemptNo: number;\n    startedAt: string;\n    durationMs: number;\n    /** SUCCESS, HTTP_ERROR, TIMEOUT, CONNECTION_ERROR, TLS_ERROR or BLOCKED_URL; more may come */\n    outcome: string;\n    /** The HTTP status your receiver answered; null when it never answered */\n    responseStatus: number | null;\n    /** The first 2 KB of what your receiver answered */\n    responseBodySnippet: string | null;\n    errorMessage: string | null;\n    /** The address your URL resolved to for this attempt */\n    resolvedIp: string | null;\n  }>;\n  request: {\n    /** The headers the delivery carried; the timestamp and the signature are shown as placeholders */\n    headers: Record<string, string>;\n  };\n}",
   "WebhookEndpointResumed": "export interface WebhookEndpointResumed {\n  id: number;\n  /** live: the events of the hotels you may act on · test: your sandboxes'. A key manages the endpoints of its own mode */\n  mode: \"live\" | \"test\";\n  url: string;\n  description: string | null;\n  apiVersion: string;\n  eventTypes: Array<string>;\n  includeGuestContact: boolean;\n  status: \"ACTIVE\" | \"PAUSED\" | \"SUSPENDED\";\n  statusReason: string | null;\n  secretVersion: number;\n  /** While set, deliveries are also signed with the secret before the last rotation */\n  previousSecretExpiresAt: string | null;\n  notifyEmail: string | null;\n  createdAt: string;\n  updatedAt: string;\n  /** When it was last paused or suspended: where a recover usually starts */\n  lastStoppedAt: string | null;\n  health: {\n    state: \"healthy\" | \"failing\" | \"paused\" | \"suspended\";\n    consecutiveFailures: number;\n    failingSince: string | null;\n    lastSuccessAt: string | null;\n    lastFailureAt: string | null;\n    lastErrorMessage: string | null;\n  };\n  /** How many events the pause held; they are being sent now, oldest first */\n  heldEvents: number;\n}",
   "WebhookEndpointDeleted": "export interface WebhookEndpointDeleted {\n  id: number;\n  deleted: true;\n}",
   "WebhookTestQueued": "export interface WebhookTestQueued {\n  /** The delivery in the log: GET /webhook-endpoints/{endpointId}/deliveries/{deliveryId} says what your receiver answered */\n  deliveryId: string;\n  eventId: string;\n  /** The type that was sent */\n  eventType: string;\n}",
@@ -6108,7 +7353,7 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
   "ConnectLink": "export interface ConnectLink {\n  /** The link's id: what the reads, the revoke and the webhook name it by. Never its token */\n  id: string;\n  propertyId: number;\n  /** Our key of the booking site */\n  channel: string;\n  /** Its name as a person reads it */\n  channelName: string;\n  /** pending: made, not opened · opened: someone is on the page · completed: Start selling was pressed · expired: it ran out first · revoked: you withdrew it, or a newer link replaced it */\n  status: \"pending\" | \"opened\" | \"completed\" | \"expired\" | \"revoked\";\n  createdAt: string;\n  /** The link opens until this instant */\n  expiresAt: string;\n  openedAt: string | null;\n  /** When the page saved the connection (paused until Start selling) */\n  connectedAt: string | null;\n  completedAt: string | null;\n  revokedAt: string | null;\n  /** The connection, as GET /channels lists it, once the page saved one */\n  channelId: string | null;\n  reference: string | null;\n  returnUrl: string | null;\n  /** The company key that made the link: named on the hotel's activity log beside everything the link does */\n  createdByKey: {\n    id: number;\n    name: string;\n    maskedKey: string;\n  };\n}",
   "ConnectLinkList": "export interface ConnectLinkList {\n  items: Array<{\n    /** The link's id: what the reads, the revoke and the webhook name it by. Never its token */\n    id: string;\n    propertyId: number;\n    /** Our key of the booking site */\n    channel: string;\n    /** Its name as a person reads it */\n    channelName: string;\n    /** pending: made, not opened · opened: someone is on the page · completed: Start selling was pressed · expired: it ran out first · revoked: you withdrew it, or a newer link replaced it */\n    status: \"pending\" | \"opened\" | \"completed\" | \"expired\" | \"revoked\";\n    createdAt: string;\n    /** The link opens until this instant */\n    expiresAt: string;\n    openedAt: string | null;\n    /** When the page saved the connection (paused until Start selling) */\n    connectedAt: string | null;\n    completedAt: string | null;\n    revokedAt: string | null;\n    /** The connection, as GET /channels lists it, once the page saved one */\n    channelId: string | null;\n    reference: string | null;\n    returnUrl: string | null;\n    /** The company key that made the link: named on the hotel's activity log beside everything the link does */\n    createdByKey: {\n      id: number;\n      name: string;\n      maskedKey: string;\n    };\n  }>;\n}",
   "ConnectLinkCreate": "export interface ConnectLinkCreate {\n  /** The hotel, by its id from GET /properties */\n  propertyId: number;\n  /** The booking site to connect: one link connects one */\n  channel: \"bookingcom\" | \"gommt\" | \"agoda\" | \"expedia\" | \"tripcom\" | \"yatra\" | \"hostelworld\" | \"airbnb\";\n  /** How long the link opens for, 1 to 168 hours; default 72 */\n  expiresInHours?: number;\n  /** Your own reference for this link; answered back by the reads, never shown to the hotel */\n  reference?: string;\n  /** Where the page offers to send the person when it is done (your own screen); https only */\n  returnUrl?: string;\n}",
-  "ConnectLinkCreated": "export interface ConnectLinkCreated {\n  link: {\n    /** The link's id: what the reads, the revoke and the webhook name it by. Never its token */\n    id: string;\n    propertyId: number;\n    /** Our key of the booking site */\n    channel: string;\n    /** Its name as a person reads it */\n    channelName: string;\n    /** pending: made, not opened · opened: someone is on the page · completed: Start selling was pressed · expired: it ran out first · revoked: you withdrew it, or a newer link replaced it */\n    status: \"pending\" | \"opened\" | \"completed\" | \"expired\" | \"revoked\";\n    createdAt: string;\n    /** The link opens until this instant */\n    expiresAt: string;\n    openedAt: string | null;\n    /** When the page saved the connection (paused until Start selling) */\n    connectedAt: string | null;\n    completedAt: string | null;\n    revokedAt: string | null;\n    /** The connection, as GET /channels lists it, once the page saved one */\n    channelId: string | null;\n    reference: string | null;\n    returnUrl: string | null;\n    /** The company key that made the link: named on the hotel's activity log beside everything the link does */\n    createdByKey: {\n      id: number;\n      name: string;\n      maskedKey: string;\n    };\n  };\n  /** The address to send to the hotel's own person. It opens ONCE and is in this answer only: we keep a hash of its token, never the token. null on a replay of the same request (X-Idempotent-Replay: true): we keep no copy to show again, so make a new link if the first answer was lost (it withdraws this one) */\n  url: string | null;\n  /** What the hotel does at the booking site before it opens the link, naming our connectivity partner as that booking site lists it. For your own screen or message to the hotel; null where there is no such step */\n  hotelStep: string | null;\n  /** Earlier links for this hotel and booking site that nobody had opened, withdrawn by this one */\n  withdrawn: number;\n}",
+  "ConnectLinkCreated": "export interface ConnectLinkCreated {\n  link: {\n    /** The link's id: what the reads, the revoke and the webhook name it by. Never its token */\n    id: string;\n    propertyId: number;\n    /** Our key of the booking site */\n    channel: string;\n    /** Its name as a person reads it */\n    channelName: string;\n    /** pending: made, not opened · opened: someone is on the page · completed: Start selling was pressed · expired: it ran out first · revoked: you withdrew it, or a newer link replaced it */\n    status: \"pending\" | \"opened\" | \"completed\" | \"expired\" | \"revoked\";\n    createdAt: string;\n    /** The link opens until this instant */\n    expiresAt: string;\n    openedAt: string | null;\n    /** When the page saved the connection (paused until Start selling) */\n    connectedAt: string | null;\n    completedAt: string | null;\n    revokedAt: string | null;\n    /** The connection, as GET /channels lists it, once the page saved one */\n    channelId: string | null;\n    reference: string | null;\n    returnUrl: string | null;\n    /** The company key that made the link: named on the hotel's activity log beside everything the link does */\n    createdByKey: {\n      id: number;\n      name: string;\n      maskedKey: string;\n    };\n  };\n  /** The address to send to the hotel's own person. It opens ONCE and is in this answer only: we keep a hash of its token, never the token. null on a replay of the same request (X-Idempotent-Replay: true): we keep no copy to show again, so make a new link if the first answer was lost (it withdraws this one) */\n  url: string | null;\n  /** What the hotel does at the booking site before it opens the link (in its extranet or through its support), naming our connectivity partner as that booking site lists it. Send it to the hotel first, and the url once the hotel has done it; null where there is no such step (Airbnb) */\n  hotelStep: string | null;\n  /** Earlier links for this hotel and booking site that nobody had opened, withdrawn by this one */\n  withdrawn: number;\n}",
   "Readiness": "export interface Readiness {\n  propertyId: number;\n  /** true: your software is already this hotel's source of truth; there is nothing to do */\n  live: boolean;\n  /** true: every check passed, so POST /go-live will switch it on (also true when live) */\n  ready: boolean;\n  /** The nights the checks looked at, in the hotel's calendar */\n  nights: {\n    from: string;\n    to: string;\n    count: number;\n  };\n  /** Which of the two ways nothing_stale passed: our record matches the channels, or your software sent the whole year first. null when it did not pass, or the hotel is already live */\n  passedBy: \"record_matches\" | \"full_year_sent\" | null;\n  checks: Array<{\n    id: \"channel_manager\" | \"catalog_linked\" | \"prices_hold\" | \"nothing_stale\";\n    passed: boolean;\n    /** What we found, in a sentence */\n    summary: string;\n    /** What to do when it did not pass; null when it passed */\n    action: string | null;\n    /** The numbers behind the sentence */\n    details?: Record<string, unknown>;\n  }>;\n}",
   "GoLiveResult": "export interface GoLiveResult {\n  propertyId: number;\n  live: true;\n  /** true: the hotel was already live and nothing changed */\n  replay: boolean;\n  /** When this call switched it on; null on a replay */\n  wentLiveAt: string | null;\n  passedBy: \"record_matches\" | \"full_year_sent\" | null;\n  /** What happens now, and what to send */\n  next: Array<string>;\n}",
   "HotelKey": "export interface HotelKey {\n  id: number;\n  propertyId: number;\n  name: string;\n  /** The key's first twelve characters: the only form it has after the answer that made it */\n  maskedKey: string;\n  mode: \"live\" | \"test\";\n  status: \"ACTIVE\" | \"REVOKED\";\n  scopes: Array<string>;\n  allowedCidrs: Array<string>;\n  createdAt: string;\n  lastUsedAt: string | null;\n  lastUsedIp: string | null;\n  expiresAt: string | null;\n  /** Set while a rotation's overlap runs: this key stops answering at this instant */\n  retireAt: string | null;\n  /** The key that replaced this one */\n  rotatedToId: number | null;\n  revokedAt: string | null;\n  revokedReason: string | null;\n}",
@@ -6127,21 +7372,21 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
   "SandboxFaultView": "export interface SandboxFaultView {\n  /** A fault is in force on this sandbox's pretend channel */\n  active: boolean;\n  kind: \"refuse\" | \"throttle\" | \"outage\" | null;\n  /** refuse: nights still to be refused */\n  remaining: number | null;\n  /** throttle, outage: when the pretend channel answers normally again (ISO 8601, UTC) */\n  until: string | null;\n  /** refuse: the pretend channel's words */\n  message: string | null;\n  setAt: string | null;\n  /** What to do next and what your software should then see, step by step */\n  watch: Array<string>;\n}"
  },
  "topics": {
-  "keys": "## auth\nscheme: Authorization: Bearer zsk_live_… (zsk_test_… on a sandbox)\nkeyShape: zsk_live_ (or zsk_test_ on a sandbox) + 40 letters and digits + a 6-character checksum (the CRC32 of everything before it, in base 62), so a key can be told from a look-alike without asking us; a key minted before 22 Nov 2026 is zsk_live_ + 43 base64url characters and keeps working until it is rotated; shown once at creation; a hotel key = one property, a company key = a software vendor's hotels\nrotation: Every key can be rotated, company keys included: the new key is shown once and the old one keeps answering for 24 hours, then answers 401 API_KEY_REVOKED. A person rotates a hotel's own keys in ZimmerStack (Developers) and a partner's company keys in the partner portal (Developers); no API route does either. The keys a partner made on a hotel are rotated in the partner portal too, or by API with a company key that holds keys:manage (x-zimmerstack.hotelKeys).\nleaks: A key reported as found in a public place (for example by GitHub secret scanning in a public repository) is revoked at once and its holder is emailed: requests on it answer 401 API_KEY_REVOKED. Mint a new key and keep it in your server's settings, never in code.\nrequestLog: Every request made with a key is kept 7 days and read back with GET /requests: time, route, status, error code, address, duration and request id; never a body or a guest's data.\nnever:\n  - query string\n  - x-api-key\n  - user-api-key\nexpiry: The owner may give a key an end of life (expiresAt); past it every request is 401 API_KEY_EXPIRED, like a revocation. A rotation keeps the life.\nscopes:\n  - scope: ari:read · does: Read availability, rates, restrictions and sync state from our record\n  - scope: ari:write · does: Set availability, rates and restrictions (pushed to every connected channel)\n  - scope: catalog:write · does: Create and change room types and rate plans (created on the channel manager and mirrored there)\n  - scope: channel-modifiers:write · does: Set a channel's price modifier: one change moves every price sent to that channel from then on\n  - scope: channel-bookings:read · does: Read the OTA bookings the channel manager delivered to this property, in the webhook's shape\n  - scope: direct-bookings:read · does: Read the bookings guests made on the hotel's own website (our booking engine), in the webhook's shape\n  - scope: direct-bookings:cancel · does: Cancel a booking guests made on the hotel's own website and refund it: per the booking's policy, in full, or not at all\n  - scope: bookings:read · does: Read bookings this key created\n  - scope: bookings:write · does: Create and cancel bookings in the PMS (inventory updates and reaches the channels)\n  - scope: bookings:payments · does: Record a payment on a booking it creates (needs bookings:write)\n  - scope: properties:write · does: Add a hotel, and remove a hotel you added (a software partner's company key only)\n  - scope: webhooks:manage · does: Manage your company webhook endpoints: create, change, pause, test, recover, redeliver and read deliveries (a software partner's company key only)\n  - scope: channels:connect · does: Make one-time connect links: the hotel's own person connects one booking site on our hosted page (a software partner's company key only)\n  - scope: keys:manage · does: List, mint, rotate and revoke the keys you made on a hotel; never a company key (a software partner's company key only)\n  - scope: billing:read · does: Read your own invoices, what your next invoice is made of, money paid ahead and your property quota (a software partner's company key only; nothing here pays or changes anything)\n  - scope: support:write · does: Open a support ticket, read your tickets, add a message and close one (a software partner's company key only)\nscopeRule: A key holds the scopes the owner granted at creation (editable later without rotating). Every route names the one scope it needs; a key without it is 403 SCOPE_MISSING. bookings:payments needs bookings:write. GET /property echoes this key's scopes.\nallowlist: Optional per key: up to 20 IPv4/IPv6 addresses or CIDR ranges. Set it to your servers' egress addresses: a request from anywhere else is 403 IP_NOT_ALLOWED, counts against the address's authentication budget, and is shown to the owner.\nwhichKey: Two kinds of key, one API. A HOTEL KEY is bound to one property: the property is implicit and needs no header (an X-ZS-Property naming another property is 404 PROPERTY_NOT_FOUND). A COMPANY KEY belongs to a software vendor and reaches every hotel the vendor may act on: name the hotel on every request with the X-ZS-Property header, its id from GET /properties. GET /properties says which kind you hold (keyKind). Routes, bodies and answers are the same for both.\ncompanyKey:\n  header: X-ZS-Property: <property id from GET /properties>\n  missingHeader: 400 PROPERTY_REQUIRED (the routes about your own company need no header and read none: GET /properties, POST /properties, DELETE /properties/{propertyId}, /properties/{propertyId}/keys, /webhook-endpoints, /connect-links, /billing, /support-tickets; GET /requests, GET /limits and GET /status answer for the company without it and for one hotel with it)\n  notReachable: 404 PROPERTY_NOT_FOUND for a property the key may not act on, whether or not it exists\n  reach: A live company key reaches the hotels the vendor enrolled and any hotel whose owner allowed the vendor (Integrations → Software vendors, by the vendor code); the owner can revoke that any time and the key stops reaching the hotel at once. A test company key reaches the vendor's own sandboxes only.\n  scopes: The channel-manager scopes (ari:read, ari:write, catalog:write, channel-modifiers:write, channel-bookings:read, direct-bookings:read, direct-bookings:cancel) and the six scopes only a company key can hold, none ticked by default: properties:write (add and remove hotels), webhooks:manage (manage your company webhook endpoints, x-zimmerstack.webhookEndpoints), channels:connect (make one-time connect links, x-zimmerstack.connectLinks), keys:manage (the keys you made on a hotel, x-zimmerstack.hotelKeys), billing:read (read your own invoices and quota, x-zimmerstack.billing) and support:write (your own support tickets, x-zimmerstack.support). A hotel's PMS bookings (bookings:*) need that hotel's own key.\n  properties: With properties:write a company key adds a hotel (POST /properties) and removes a hotel it added (DELETE /properties/{propertyId}): x-zimmerstack.properties. A key that holds only properties:write acts on no hotel (403 SCOPE_MISSING when it names one). In the partner portal a key with this scope is made by the account owner or an Admin, the people who may add a hotel there. Two more of the six are given only by someone who holds the matching power there: channels:connect by someone who may act for a hotel, billing:read by someone who may open the Billing page. Whoever may make a company key in Developers may give webhooks:manage, keys:manage and support:write.\n  budgets: Each hotel keeps its own per-key and per-property budgets; the company key also has one budget across all its hotels (x-zimmerstack.limits.companyRequestsPerMinute).\n  writes: An ARI write to a hotel whose local rates and availability are not the channels' source of truth is 409 ARI_NOT_AUTHORITATIVE (a hotel a vendor enrols is born the source of truth).\n  minted: In the ZimmerStack partner portal (Developers), shown once, revoked there.\n  webhooks: One company webhook endpoint (made in the partner portal, Developers, or by API with the webhooks:manage scope: /webhook-endpoints) receives the booking and sync events of every hotel a live company key reaches; each event names its hotel in property.id. A sandbox endpoint receives the vendor's sandbox. A pause holds events: they are kept (up to 90 days) and sent in order on resume. A suspension (72 hours of failures) drops them; Recover since (the portal, or POST /webhook-endpoints/{endpointId}/recover) replays them, for a hotels endpoint only from hotels that allowed the vendor when the event happened and still do.\n\n",
-  "money-and-dates": "## dates\nYYYY-MM-DD, calendar dates in the property's timezone (GET /property); a stay occupies [checkIn, checkOut) — the checkout day is not a night\n\n## money\none shape both ways: an amount is SENT and RETURNED in major units with the property's currency, as a number or a decimal string with the currency's own decimals (rate \"4500.50\"), beside currency and decimals; rateMinor stays, in hundredths of the major unit (x-zimmerstack.moneyByCurrency)\n\n## moneyByCurrency\nunits: ISO 4217 gives every currency a MAJOR unit (the rupee, the euro, the yen) and a MINOR unit, with 0, 2 or 3 decimals between them. Amounts here are major units. Every field named …Minor is one HUNDREDTH of the major unit in EVERY currency, which is the ISO minor unit only where the currency has two decimals: a rate of 15000 yen reads rateMinor 1500000, a rate of 1850000 rupiah reads 185000000. Divide by 100, always; or read the decimal string beside it (rate), which needs no arithmetic.\ndecimals: What your software sends is kept exactly, to the currency's own decimals (GET /property decimals): 4500.50 rupees is stored and returned as 4500.50, 89.50 euros as 89.50. A currency without decimals (yen, dong) is whole: a price sent with a fraction is rounded and named in the answer's rounded list. A price with more decimals than the currency has, a number or a decimal string alike, is rounded half up to them and named too. A currency with three decimals (the Gulf dinars) is kept as a whole amount for now, and the answer says so. Nothing is rounded silently. How a hotel keeps a price its own staff type on ZimmerStack's screens is the hotel's setting and never changes what you send.\ntable:\n  - currency: INR · name: Indian rupee · decimals: 2 · send: 4500.50 · rate: 4500.50 · rateMinor: 450050 · isoMinorUnits: 450050 · note: rateMinor is the ISO minor unit here · example: INR 4500.50\n  - currency: EUR · name: Euro · decimals: 2 · send: 89.50 · rate: 89.50 · rateMinor: 8950 · isoMinorUnits: 8950 · note: rateMinor is the ISO minor unit here · example: EUR 89.50\n  - currency: USD · name: US dollar · decimals: 2 · send: 129.99 · rate: 129.99 · rateMinor: 12999 · isoMinorUnits: 12999 · note: rateMinor is the ISO minor unit here · example: USD 129.99\n  - currency: IDR · name: Indonesian rupiah · decimals: 2 · send: 1850000 · rate: 1850000.00 · rateMinor: 185000000 · isoMinorUnits: 185000000 · note: rateMinor is the ISO minor unit here · example: IDR 1850000.00\n  - currency: JPY · name: Japanese yen · decimals: 0 · send: 15000 · rate: 15000 · rateMinor: 1500000 · isoMinorUnits: null · note: rateMinor is hundredths, not the ISO minor unit: read rate · example: JPY 15000\n  - currency: KWD · name: Kuwaiti dinar · decimals: 3 · send: 45.75 · rate: 46.000 · rateMinor: 4600 · isoMinorUnits: null · note: KWD prices cannot be kept to three decimal places yet, so the price is kept as a whole amount. · example: KWD 46.000\nlimits: A rate may be 1 to 21474836 in any currency. A rate plan's standing price and a modifier's fixed step are limited to 1000000 for a property selling in rupees, and to 21474836 for any other currency.\ntaxes: A hotel outside India that has confirmed its own tax lines gets them on a booking: POST /bookings reads nightlyRateIncludesTaxes. Default true: the rate is what the guest paid online; it is split into the lines and totalAmount does not move, except for a line the hotel collects at the property itself (a city tax per person a night), which is added and paid at the hotel. false: the rate is as the hotel sells it at its desk; lines the hotel adds on top are added, lines it keeps inside its prices stay inside. The booking answers carry taxes; always read totalAmount from the answer. A hotel in India, or one with no confirmed lines, has no taxes block and refuses false with TAXES_NOT_CONFIGURED; a hotel whose taxes all sit inside its prices refuses false with TAXES_INSIDE_RATES.\nchannelBookings: An OTA may send a booking in another currency than the property's. Nothing is converted: amounts.receivedCurrency names the currency the amounts are in, and is absent on every other booking. A booking's taxes block carries the hotel's own lines once it is assessed.\n\n## writes\nabsolute values, last write wins within a request, unchanged cells are dropped before anything is written\n\n## idempotency\nheader: x-idempotency-key\nretentionDays: 7\n\n",
-  "samplesByPlace": "## samplesByPlace\nlisbon:\n  about: A guest house in Lisbon. It sells in euros, so a price keeps its cents (89.50 stays 89.50), and it has confirmed Portugal's accommodation VAT, which sits inside its prices and is worked out night by night.\n  property:\n    id: 204\n    name: Casa do Miradouro\n    timezone: Europe/Lisbon\n    currency: EUR\n  catalog:\n    currency: EUR\n    roomTypes:\n      - id: 731 · ref: rt-double · name: Double Room, River View · maxAdults: 2 · maxChildren: 1 · roomKind: room · sync: IN_SYNC\n    ratePlans:\n      - id: 1502 · ref: rp-bb · roomTypeId: 731 · name: Bed and breakfast · mealPlan: CP · occupancy: 2 · currency: EUR · refundable: true · sync: IN_SYNC\n  ratesWrite:\n    updates:\n      - ratePlanId: 1502 · dateFrom: 2026-11-01 · dateTo: 2027-03-31 · rate: 89.50 · currency: EUR\n      - ratePlanId: 1502 · dateFrom: 2026-11-01 · dateTo: 2027-03-31 · days: [\"fr\",\"sa\"] · rate: 112 · currency: EUR\n  ratePlansUpsert:\n    ratePlans:\n      - ref: rp-bb · roomTypeRef: rt-double · name: Bed and breakfast · mealPlan: CP · occupancy: 2 · refundable: true · defaultRate: 89.50\n  bookingCreate:\n    externalReference: WEB-2026-LX-0412\n    checkIn: 2026-12-20\n    checkOut: 2026-12-23\n    currency: EUR\n    guest:\n      name: Inês Carvalho\n      phone: +351912345678\n      email: ines@example.com\n      notes: Arriving by train, around 21:00\n    rooms:\n      - roomTypeId: 731 · ratePlanId: 1502 · adults: 2 · nightlyRate: 89.50\n    payment:\n      amount: 89.50\n      method: CARD\n      reference: pay_LxQ81n4\n  bookingView:\n    bookingId: 61877\n    reference: CM-4TQ8ZK2P\n    externalReference: WEB-2026-LX-0412\n    status: UPCOMING\n    checkIn: 2026-12-20\n    checkOut: 2026-12-23\n    nights: 3\n    currency: EUR\n    totalAmount: 268.50\n    totalPaid: 89.50\n    balanceDue: 179.00\n    guest:\n      name: Inês Carvalho\n      phone: +351912345678\n      email: ines@example.com\n    rooms:\n      - bookingRoomId: 120441 · roomTypeId: 731 · ratePlanId: 1502 · mealPlan: CP · adults: 2 · children: 0 · nightlyRate: 89.50 · status: UPCOMING\n    inventory:\n      eventRecorded: true\n      channelManager: true\n      pushedBy: inventory-drain\n    replay: false\n    createdAt: 2026-11-17T10:02:44.118Z\n    cancelledAt: null\n    taxes:\n      nightlyRateIncludesTaxes: true\n      lines:\n        - code: PT-VAT-ACCOMMODATION · name: VAT 6% · kind: TAX · includedInRate: true · amount: 15.21\n      includedInRates: 15.21\n      addedToTotal: 0.00\nbali:\n  about: A villa in Ubud, Bali. It sells in rupiah: a nightly price is seven digits and has no cents in practice. It has confirmed a 10% service charge and the 10% hotel tax (PBJT) on the room plus service, both added on top, and its booking engine sends prices before taxes.\n  property:\n    id: 318\n    name: Villa Sawah Ubud\n    timezone: Asia/Makassar\n    currency: IDR\n  catalog:\n    currency: IDR\n    roomTypes:\n      - id: 902 · ref: rt-villa · name: One-Bedroom Pool Villa · maxAdults: 2 · maxChildren: 1 · roomKind: room · sync: IN_SYNC\n    ratePlans:\n      - id: 2210 · ref: rp-ro · roomTypeId: 902 · name: Room only · mealPlan: EP · occupancy: 2 · currency: IDR · refundable: true · sync: IN_SYNC\n  ratesWrite:\n    updates:\n      - ratePlanId: 2210 · dateFrom: 2026-11-01 · dateTo: 2027-03-31 · rate: 1850000 · currency: IDR\n      - ratePlanId: 2210 · dateFrom: 2026-12-24 · dateTo: 2027-01-02 · rate: 2400000 · currency: IDR\n  ratePlansUpsert:\n    ratePlans:\n      - ref: rp-ro · roomTypeRef: rt-villa · name: Room only · mealPlan: EP · occupancy: 2 · refundable: true · defaultRate: 1850000\n  bookingCreate:\n    externalReference: WEB-2026-UBD-0077\n    checkIn: 2026-12-10\n    checkOut: 2026-12-12\n    currency: IDR\n    nightlyRateIncludesTaxes: false\n    guest:\n      name: Made Wirawan\n      phone: +6281234567890\n      email: made@example.com\n    rooms:\n      - roomTypeId: 902 · ratePlanId: 2210 · adults: 2 · nightlyRate: 1850000\n  bookingView:\n    bookingId: 70312\n    reference: CM-9HX3PW7N\n    externalReference: WEB-2026-UBD-0077\n    status: UPCOMING\n    checkIn: 2026-12-10\n    checkOut: 2026-12-12\n    nights: 2\n    currency: IDR\n    totalAmount: 4477000.00\n    totalPaid: 0.00\n    balanceDue: 4477000.00\n    guest:\n      name: Made Wirawan\n      phone: +6281234567890\n      email: made@example.com\n    rooms:\n      - bookingRoomId: 131907 · roomTypeId: 902 · ratePlanId: 2210 · mealPlan: EP · adults: 2 · children: 0 · nightlyRate: 1850000.00 · status: UPCOMING\n    inventory:\n      eventRecorded: true\n      channelManager: true\n      pushedBy: inventory-drain\n    replay: false\n    createdAt: 2026-11-17T03:40:09.552Z\n    cancelledAt: null\n    taxes:\n      nightlyRateIncludesTaxes: false\n      lines:\n        - code: SERVICE_CHARGE · name: Service charge 10% · kind: FEE · includedInRate: false · amount: 370000.00\n        - code: ID-PBJT-PERHOTELAN · name: Hotel tax (PBJT) 10% · kind: TAX · includedInRate: false · amount: 407000.00\n      includedInRates: 0.00\n      addedToTotal: 777000.00\n\n",
+  "keys": "## auth\nscheme: Authorization: Bearer zsk_live_… (zsk_test_… on a sandbox)\nkeyShape: zsk_live_ (or zsk_test_ on a sandbox) + 40 letters and digits + a 6-character checksum (the CRC32 of everything before it, in base 62), so a key can be told from a look-alike without asking us; a key minted before 22 Nov 2026 is zsk_live_ + 43 base64url characters and keeps working until it is rotated; shown once at creation; a hotel key = one property, a company key = a software vendor's hotels\nrotation: Every key can be rotated, company keys included: the new key is shown once and the old one keeps answering for 24 hours, then answers 401 API_KEY_REVOKED. A person rotates a hotel's own keys in ZimmerStack (Developers) and a partner's company keys in the partner portal (Developers); no API route does either. The keys a partner made on a hotel are rotated in the partner portal too, or by API with a company key that holds keys:manage (x-zimmerstack.hotelKeys).\nleaks: A key reported as found in a public place (for example by GitHub secret scanning in a public repository) is revoked at once and its holder is emailed: requests on it answer 401 API_KEY_REVOKED. Mint a new key and keep it in your server's settings, never in code.\nrequestLog: Every request made with a key is kept 7 days and read back with GET /requests: time, route, status, error code, address, duration and request id; never a body or a guest's data.\nnever:\n  - query string\n  - x-api-key\n  - user-api-key\nexpiry: The owner may give a key an end of life (expiresAt); past it every request is 401 API_KEY_EXPIRED, like a revocation. A rotation keeps the life.\nscopes:\n  - scope: ari:read · does: Read availability, rates, restrictions and sync state from our record\n  - scope: ari:write · does: Set availability, rates and restrictions (pushed to every connected channel)\n  - scope: catalog:write · does: Create and change room types and rate plans (created on the channel manager and mirrored there)\n  - scope: channel-modifiers:write · does: Set a channel's price modifier: one change moves every price sent to that channel from then on\n  - scope: channel-bookings:read · does: Read the OTA bookings the channel manager delivered to this property, in the webhook's shape\n  - scope: direct-bookings:read · does: Read the bookings guests made on the hotel's own website (our booking engine), in the webhook's shape\n  - scope: direct-bookings:cancel · does: Cancel a booking guests made on the hotel's own website and refund it: per the booking's policy, in full, or not at all\n  - scope: bookings:read · does: Read bookings this key created\n  - scope: bookings:write · does: Create and cancel bookings in the PMS (inventory updates and reaches the channels)\n  - scope: bookings:payments · does: Record a payment on a booking it creates (needs bookings:write)\n  - scope: properties:write · does: Add a hotel, and change or remove a hotel you added (a software partner's company key only)\n  - scope: webhooks:manage · does: Manage your company webhook endpoints: create, change, pause, test, recover, redeliver and read deliveries (a software partner's company key only)\n  - scope: channels:connect · does: Make one-time connect links: the hotel's own person connects one booking site on our hosted page (a software partner's company key only)\n  - scope: keys:manage · does: List, mint, rotate and revoke the keys you made on a hotel; never a company key (a software partner's company key only)\n  - scope: billing:read · does: Read your own invoices, what your next invoice is made of, money paid ahead and your property quota (a software partner's company key only; nothing here pays or changes anything)\n  - scope: support:write · does: Open a support ticket, read your tickets, add a message and close one (a software partner's company key only)\nscopeRule: A key holds the scopes the owner granted at creation (editable later without rotating). Every route names the one scope it needs; a key without it is 403 SCOPE_MISSING. bookings:payments needs bookings:write. GET /property echoes this key's scopes.\nallowlist: Optional per key: up to 20 IPv4/IPv6 addresses or CIDR ranges. Set it to your servers' egress addresses: a request from anywhere else is 403 IP_NOT_ALLOWED, counts against the address's authentication budget, and is shown to the owner.\nwhichKey: Two kinds of key, one API. A HOTEL KEY is bound to one property: the property is implicit and needs no header (an X-ZS-Property naming another property is 404 PROPERTY_NOT_FOUND). A COMPANY KEY belongs to a software vendor and reaches every hotel the vendor may act on: name the hotel on every request with the X-ZS-Property header, its id from GET /properties. GET /properties says which kind you hold (keyKind). Routes, bodies and answers are the same for both.\ncompanyKey:\n  header: X-ZS-Property: <property id from GET /properties>\n  missingHeader: 400 PROPERTY_REQUIRED, whose data.details lists the first 20 hotels your key reaches (properties: id and name; total: how many there are), so you can pick one at once (the routes about your own company need no header and read none: GET /properties, POST /properties, PATCH /properties/{propertyId}, DELETE /properties/{propertyId}, /properties/{propertyId}/keys, /webhook-endpoints, /connect-links, /billing, /support-tickets; GET /requests, GET /limits and GET /status answer for the company without it and for one hotel with it)\n  notReachable: 404 PROPERTY_NOT_FOUND for a property the key may not act on, whether or not it exists\n  reach: A live company key reaches the hotels the vendor enrolled and any hotel whose owner allowed the vendor (Integrations → Software vendors, by the vendor code); the owner can revoke that any time and the key stops reaching the hotel at once. A test company key reaches the vendor's own sandboxes only.\n  scopes: The channel-manager scopes (ari:read, ari:write, catalog:write, channel-modifiers:write, channel-bookings:read, direct-bookings:read, direct-bookings:cancel) and the six scopes only a company key can hold, none ticked by default: properties:write (add, change and remove hotels), webhooks:manage (manage your company webhook endpoints, x-zimmerstack.webhookEndpoints), channels:connect (make one-time connect links, x-zimmerstack.connectLinks), keys:manage (the keys you made on a hotel, x-zimmerstack.hotelKeys), billing:read (read your own invoices and quota, x-zimmerstack.billing) and support:write (your own support tickets, x-zimmerstack.support). A hotel's PMS bookings (bookings:*) need that hotel's own key.\n  properties: With properties:write a company key adds a hotel (POST /properties), changes the name and address of a hotel it added (PATCH /properties/{propertyId}) and removes a hotel it added (DELETE /properties/{propertyId}): x-zimmerstack.properties. A key that holds only properties:write acts on no hotel (403 SCOPE_MISSING when it names one). In the partner portal a key with this scope is made by the account owner or an Admin, the people who may add a hotel there. Two more of the six are given only by someone who holds the matching power there: channels:connect by someone who may act for a hotel, billing:read by someone who may open the Billing page. Whoever may make a company key in Developers may give webhooks:manage, keys:manage and support:write.\n  budgets: Each hotel keeps its own per-key and per-property budgets; the company key also has one budget across all its hotels (x-zimmerstack.limits.companyRequestsPerMinute).\n  writes: An ARI write to a hotel whose local rates and availability are not the channels' source of truth is 409 ARI_NOT_AUTHORITATIVE (a hotel a vendor enrols is born the source of truth).\n  minted: In the ZimmerStack partner portal (Developers), shown once, revoked there.\n  webhooks: One company webhook endpoint (made in the partner portal, Developers, or by API with the webhooks:manage scope: /webhook-endpoints) receives the booking and sync events of every hotel a live company key reaches; each event names its hotel in property.id. A sandbox endpoint receives the vendor's sandbox. A pause holds events: they are kept (up to 90 days) and sent in order on resume. A suspension (72 hours of failures) drops them; Recover since (the portal, or POST /webhook-endpoints/{endpointId}/recover) replays them, for a hotels endpoint only from hotels that allowed the vendor when the event happened and still do.\n\n",
+  "money-and-dates": "## dates\nYYYY-MM-DD, calendar dates in the property's timezone (GET /property); a stay occupies [checkIn, checkOut) — the checkout day is not a night\n\n## money\none shape both ways: an amount is SENT and RETURNED in major units with the property's currency, as a number or a decimal string with the currency's own decimals (rate \"4500.50\"), beside currency and decimals; rateMinor stays, in hundredths of the major unit (x-zimmerstack.moneyByCurrency)\n\n## moneyByCurrency\nunits: ISO 4217 gives every currency a MAJOR unit (the rupee, the euro, the yen) and a MINOR unit, with 0, 2 or 3 decimals between them. Amounts here are major units. Every field named …Minor is one HUNDREDTH of the major unit in EVERY currency, which is the ISO minor unit only where the currency has two decimals: a rate of 15000 yen reads rateMinor 1500000, a rate of 1850000 rupiah reads 185000000. Divide by 100, always; or read the decimal string beside it (rate), which needs no arithmetic.\ndecimals: What your software sends is kept exactly, to the currency's own decimals (GET /property decimals): 4500.50 rupees is stored and returned as 4500.50, 89.50 euros as 89.50. A currency without decimals (yen, dong) is whole: a price sent with a fraction (15000.5, or \"15000.50\") is rounded and named in the answer's rounded list. A price sent as a NUMBER with more decimals than the currency has (4500.505 in rupees) is rounded half up to them and named too. A price sent as a decimal STRING carries at most two decimals: one with three or more (\"4500.505\") is refused, 400 VALIDATION, and nothing is written. A currency with three decimals (the Gulf dinars) is kept as a whole amount for now, and the answer says so. Nothing is rounded silently. How a hotel keeps a price its own staff type on ZimmerStack's screens is the hotel's setting and never changes what you send.\ntable:\n  - currency: INR · name: Indian rupee · decimals: 2 · send: 4500.50 · rate: 4500.50 · rateMinor: 450050 · isoMinorUnits: 450050 · note: rateMinor is the ISO minor unit here · example: INR 4500.50\n  - currency: EUR · name: Euro · decimals: 2 · send: 89.50 · rate: 89.50 · rateMinor: 8950 · isoMinorUnits: 8950 · note: rateMinor is the ISO minor unit here · example: EUR 89.50\n  - currency: USD · name: US dollar · decimals: 2 · send: 129.99 · rate: 129.99 · rateMinor: 12999 · isoMinorUnits: 12999 · note: rateMinor is the ISO minor unit here · example: USD 129.99\n  - currency: IDR · name: Indonesian rupiah · decimals: 2 · send: 1850000 · rate: 1850000.00 · rateMinor: 185000000 · isoMinorUnits: 185000000 · note: rateMinor is the ISO minor unit here · example: IDR 1850000.00\n  - currency: JPY · name: Japanese yen · decimals: 0 · send: 15000 · rate: 15000 · rateMinor: 1500000 · isoMinorUnits: null · note: rateMinor is hundredths, not the ISO minor unit: read rate · example: JPY 15000\n  - currency: KWD · name: Kuwaiti dinar · decimals: 3 · send: 45.75 · rate: 46.000 · rateMinor: 4600 · isoMinorUnits: null · note: KWD prices cannot be kept to three decimal places yet, so the price is kept as a whole amount. · example: KWD 46.000\nlimits: A rate may be 1 to 21474836 in any currency. A rate plan's standing price and a modifier's fixed step are limited to 1000000 for a property selling in rupees, and to 21474836 for any other currency.\ntaxes: A hotel outside India that has confirmed its own tax lines gets them on a booking: POST /bookings reads nightlyRateIncludesTaxes. Default true: the rate is what the guest paid online; it is split into the lines and totalAmount does not move, except for a line the hotel collects at the property itself (a city tax per person a night), which is added and paid at the hotel. false: the rate is as the hotel sells it at its desk; lines the hotel adds on top are added, lines it keeps inside its prices stay inside. The booking answers carry taxes; always read totalAmount from the answer. A hotel in India, or one with no confirmed lines, has no taxes block and refuses false with TAXES_NOT_CONFIGURED; a hotel whose taxes all sit inside its prices refuses false with TAXES_INSIDE_RATES.\nchannelBookings: An OTA may send a booking in another currency than the property's. Nothing is converted: amounts.receivedCurrency names the currency the amounts are in, and is absent on every other booking. A booking's taxes block carries the hotel's own lines once it is assessed.\n\n## writes\nabsolute values, last write wins within a request, unchanged cells are dropped before anything is written\n\n## idempotency\nheader: x-idempotency-key\nretentionDays: 7\n\n",
+  "samplesByPlace": "## samplesByPlace\nlisbon:\n  about: A guest house in Lisbon. It sells in euros, so a price keeps its cents (89.50 stays 89.50), and it has confirmed Portugal's accommodation VAT, which sits inside its prices and is worked out night by night.\n  property:\n    id: 204\n    name: Casa do Miradouro\n    timezone: Europe/Lisbon\n    currency: EUR\n  catalog:\n    currency: EUR\n    roomTypes:\n      - id: 731 · ref: rt-double · name: Double Room, River View · maxAdults: 2 · maxChildren: 1 · roomKind: room · sync: IN_SYNC\n    ratePlans:\n      - id: 1502 · ref: rp-bb · roomTypeId: 731 · name: Bed and breakfast · mealPlan: CP · occupancy: 2 · currency: EUR · refundable: true · sync: IN_SYNC\n  ratesWrite:\n    updates:\n      - ratePlanId: 1502 · dateFrom: 2026-12-01 · dateTo: 2027-03-31 · rate: 89.50 · currency: EUR\n      - ratePlanId: 1502 · dateFrom: 2026-12-01 · dateTo: 2027-03-31 · days: [\"fr\",\"sa\"] · rate: 112 · currency: EUR\n  ratePlansUpsert:\n    ratePlans:\n      - ref: rp-bb · roomTypeRef: rt-double · name: Bed and breakfast · mealPlan: CP · occupancy: 2 · refundable: true · defaultRate: 89.50\n  bookingCreate:\n    externalReference: WEB-2026-LX-0412\n    checkIn: 2026-12-20\n    checkOut: 2026-12-23\n    currency: EUR\n    guest:\n      name: Inês Carvalho\n      phone: +351912345678\n      email: ines@example.com\n      notes: Arriving by train, around 21:00\n    rooms:\n      - roomTypeId: 731 · ratePlanId: 1502 · adults: 2 · nightlyRate: 89.50\n    payment:\n      amount: 89.50\n      method: CARD\n      reference: pay_LxQ81n4\n  bookingView:\n    bookingId: 61877\n    reference: CM-4TQ8ZK2P\n    externalReference: WEB-2026-LX-0412\n    status: UPCOMING\n    checkIn: 2026-12-20\n    checkOut: 2026-12-23\n    nights: 3\n    currency: EUR\n    totalAmount: 268.50\n    totalPaid: 89.50\n    balanceDue: 179.00\n    guest:\n      name: Inês Carvalho\n      phone: +351912345678\n      email: ines@example.com\n    rooms:\n      - bookingRoomId: 120441 · roomTypeId: 731 · ratePlanId: 1502 · mealPlan: CP · adults: 2 · children: 0 · nightlyRate: 89.50 · status: UPCOMING\n    inventory:\n      eventRecorded: true\n      channelManager: true\n      pushedBy: inventory-drain\n    replay: false\n    createdAt: 2026-11-17T10:02:44.118Z\n    cancelledAt: null\n    taxes:\n      nightlyRateIncludesTaxes: true\n      lines:\n        - code: PT-VAT-ACCOMMODATION · name: VAT 6% · kind: TAX · includedInRate: true · amount: 15.21\n      includedInRates: 15.21\n      addedToTotal: 0.00\nbali:\n  about: A villa in Ubud, Bali. It sells in rupiah: a nightly price is seven digits and has no cents in practice. It has confirmed a 10% service charge and the 10% hotel tax (PBJT) on the room plus service, both added on top, and its booking engine sends prices before taxes.\n  property:\n    id: 318\n    name: Villa Sawah Ubud\n    timezone: Asia/Makassar\n    currency: IDR\n  catalog:\n    currency: IDR\n    roomTypes:\n      - id: 902 · ref: rt-villa · name: One-Bedroom Pool Villa · maxAdults: 2 · maxChildren: 1 · roomKind: room · sync: IN_SYNC\n    ratePlans:\n      - id: 2210 · ref: rp-ro · roomTypeId: 902 · name: Room only · mealPlan: EP · occupancy: 2 · currency: IDR · refundable: true · sync: IN_SYNC\n  ratesWrite:\n    updates:\n      - ratePlanId: 2210 · dateFrom: 2026-12-01 · dateTo: 2027-03-31 · rate: 1850000 · currency: IDR\n      - ratePlanId: 2210 · dateFrom: 2026-12-24 · dateTo: 2027-01-02 · rate: 2400000 · currency: IDR\n  ratePlansUpsert:\n    ratePlans:\n      - ref: rp-ro · roomTypeRef: rt-villa · name: Room only · mealPlan: EP · occupancy: 2 · refundable: true · defaultRate: 1850000\n  bookingCreate:\n    externalReference: WEB-2026-UBD-0077\n    checkIn: 2026-12-10\n    checkOut: 2026-12-12\n    currency: IDR\n    nightlyRateIncludesTaxes: false\n    guest:\n      name: Made Wirawan\n      phone: +6281234567890\n      email: made@example.com\n    rooms:\n      - roomTypeId: 902 · ratePlanId: 2210 · adults: 2 · nightlyRate: 1850000\n  bookingView:\n    bookingId: 70312\n    reference: CM-9HX3PW7N\n    externalReference: WEB-2026-UBD-0077\n    status: UPCOMING\n    checkIn: 2026-12-10\n    checkOut: 2026-12-12\n    nights: 2\n    currency: IDR\n    totalAmount: 4477000.00\n    totalPaid: 0.00\n    balanceDue: 4477000.00\n    guest:\n      name: Made Wirawan\n      phone: +6281234567890\n      email: made@example.com\n    rooms:\n      - bookingRoomId: 131907 · roomTypeId: 902 · ratePlanId: 2210 · mealPlan: EP · adults: 2 · children: 0 · nightlyRate: 1850000.00 · status: UPCOMING\n    inventory:\n      eventRecorded: true\n      channelManager: true\n      pushedBy: inventory-drain\n    replay: false\n    createdAt: 2026-11-17T03:40:09.552Z\n    cancelledAt: null\n    taxes:\n      nightlyRateIncludesTaxes: false\n      lines:\n        - code: SERVICE_CHARGE · name: Service charge 10% · kind: FEE · includedInRate: false · amount: 370000.00\n        - code: ID-PBJT-PERHOTELAN · name: Hotel tax (PBJT) 10% · kind: TAX · includedInRate: false · amount: 407000.00\n      includedInRates: 0.00\n      addedToTotal: 777000.00\n\n",
   "limits": "## limits\nrequestsPerMinute: 120\nwritesPerMinute: 30\npropertyRequestsPerMinute: 300\npropertyWritesPerMinute: 60\npropertyCellsPerMinute: 20000\nipRequestsPerMinute: 240\nipAuthFailuresPerMinute: 20\nkeyAuthFailuresPerMinute: 5\nglobalUnauthenticatedPerMinute: 1200\nglobalRequestsPerMinute: 3000\nmaxUpdatesPerRequest: 1000\nmaxCellsPerRequest: 5000\nmaxBodyBytes: 1048576\nhorizonDays: 500\nbookingsPerMinute: 20\npropertyBookingsPerMinute: 40\npropertyBookingsPerDay: 500\ndirectCancelsPerMinute: 10\npropertyDirectCancelsPerDay: 50\ncompanyRequestsPerMinute: 1200\nmaxNightsPerBooking: 90\n\n## rateLimits\nwindow: 60 s sliding, shared by every API machine; counters are exact, not per machine\nscopes:\n  - scope: api-address · perMinute: 1200 · counts: every request to any ZimmerStack API route from one address (an IPv6 /56 counts as one address), counted on each API machine: the guard in front of everything, the Connect API included · header: api-address · per: address, on each API machine · window: 60 s fixed · windowSeconds: 60\n  - scope: ip · perMinute: 240 · counts: requests from one address (an IPv6 /56 counts as one address) that carry no key verified from it in the last ten minutes, checked before the key is read. A key that has authenticated from that address is counted against its own budgets, not here · header: ip · per: address · window: 60 s sliding · windowSeconds: 60\n  - scope: ip-auth · perMinute: 20 · counts: 401 answers, and 403 IP_NOT_ALLOWED, to one address; past it the address's unverified requests are refused before any lookup. A key that authenticated from that address in the last ten minutes keeps working · header: ip-auth · per: address · window: 60 s sliding · windowSeconds: 60\n  - scope: key-auth · perMinute: 5 · counts: 401 and 403 IP_NOT_ALLOWED answers to one key (its first twelve characters) from one address; past it that key is refused from that address before any lookup, so one revoked key never uses up its address's budget · header: key-auth · per: address and key · window: 60 s sliding · windowSeconds: 60\n  - scope: global-unauthenticated · perMinute: 1200 · counts: requests from every address together that carry no recently verified key and so cost a key lookup: the most a flood of made-up keys can ask of the database · header: global-unauthenticated · per: everyone without a verified key · window: 60 s sliding · windowSeconds: 60\n  - scope: requests · perMinute: 120 · counts: every request on one key · header: key · per: key · window: 60 s sliding · windowSeconds: 60\n  - scope: writes · perMinute: 30 · counts: every request on one key that is not a GET (PUT, POST and DELETE); a dry run (dryRun: true) is a write here · header: key-writes · per: key · window: 60 s sliding · windowSeconds: 60\n  - scope: property · perMinute: 300 · counts: every request on all of a property's keys together (five keys are not five budgets) · header: property · per: property (all its keys) · window: 60 s sliding · windowSeconds: 60\n  - scope: property-writes · perMinute: 60 · counts: every request that is not a GET on all of a property's keys together · header: property-writes · per: property (all its keys) · window: 60 s sliding · windowSeconds: 60\n  - scope: cells · perMinute: 20000 · counts: cells a property's writes name after range expansion, charged before anything is read or written. A dry run is charged the same cells as the write it previews; a close or a reopen (POST /availability/close) is charged the room type's count and each of its rate plans for every night · header: cells · per: property (all its keys) · window: 60 s sliding · windowSeconds: 60\n  - scope: company · perMinute: 1200 · counts: every request on one company key, across all its hotels (each hotel keeps its own key and property budgets too) · header: company · per: company key (all its hotels) · window: 60 s sliding · windowSeconds: 60\n  - scope: global · perMinute: 3000 · counts: every authenticated request on the Connect API, all keys together; test keys count in a ceiling of their own of the same size, so a sandbox never spends what live hotels use · header: global · per: everyone · window: 60 s sliding · windowSeconds: 60\n  - scope: bookings · perMinute: 20 · counts: POST /bookings on one key · header: bookings · per: key · window: 60 s sliding · windowSeconds: 60\n  - scope: property-bookings · perMinute: 40 · counts: POST /bookings on all of a property's keys together · header: property-bookings · per: property (all its keys) · window: 60 s sliding · windowSeconds: 60\n  - scope: property-bookings-day · perMinute: 500 · counts: POST /bookings per property per ROLLING 24 HOURS (not per minute); the owner can raise it per property · header: null · per: property (all its keys) · window: rolling 24 hours · windowSeconds: 86400\n  - scope: direct-cancels · perMinute: 10 · counts: POST /direct-bookings/{bookingId}/cancel on one key (a replay is not counted) · header: direct-cancels · per: key · window: 60 s sliding · windowSeconds: 60\n  - scope: property-direct-cancels-day · perMinute: 50 · counts: POST /direct-bookings/{bookingId}/cancel per property per ROLLING 24 HOURS (not per minute) · header: null · per: property (all its keys) · window: rolling 24 hours · windowSeconds: 86400\naddress: An address is one IPv4 address or one IPv6 /56. The ip, ip-auth and global-unauthenticated budgets are for requests we cannot name yet: a key that has authenticated from its address in the last ten minutes is counted against its own budgets (and its company's), not against them, and is never refused for another key's failures. A key that keeps failing is refused alone (key-auth) before it can use up its address's budget.\nwrites: A write is every request that is not a GET: PUT, POST and DELETE count against the writes budgets alike.\nheaders:\n  RateLimit-Policy: on every answer, one quoted policy per budget the request was measured against, with its quota and its window in seconds, the key's own first — \"key\";q=120;w=60, \"key-writes\";q=30;w=60, \"property\";q=300;w=60, \"global\";q=3000;w=60\n  RateLimit: on every answer, for the same budgets, what is left and the seconds until it has room — \"key\";r=117;t=42, \"key-writes\";r=29;t=42, \"property\";r=296;t=42, \"global\";r=2990;t=58\n  names: The name in the header is the budget's data.scope, except the key's own two: requests is \"key\" and writes is \"key-writes\". A write route also carries its own minute budgets (cells, bookings, property-bookings, direct-cancels). The headers carry the budgets of a minute only: a budget over an hour or a day is not there, and GET /limits answers it.\n  Retry-After: on every 429, whole seconds to wait; the body's data.scope says which budget refused, and its line in RateLimit reads r=0\nonRefusal: 429 RATE_LIMITED. Wait Retry-After, then resend the same request. Never retry in a tight loop; never retry any other 4xx.\ntooLarge: 413 when the JSON body exceeds 1048576 bytes; split the updates array\npace:\n  - Batch: one PUT per resource carrying ranges (dateFrom..dateTo, optional days) — a 365-night calendar for three plans is a handful of updates, not a thousand\n  - Send on change, not on a timer: unchanged cells are dropped and cost nothing, but they still spend your request budget\n  - Read RateLimit on every answer and slow down when r approaches 0, instead of waiting for a 429\n  - Reuse x-idempotency-key on a retry so a timed-out request can never land twice\n  - Poll GET /batches/{batchId} and GET /sync no more than every 15 s; the push to the channels is asynchronous and bounded by the channel manager's own budget\nchannelManager:\n  whyAsynchronous: Your 202 means the cells are in our record. Pushing them to the channel manager is paced by its budget — ten rate/restriction reads a minute for the whole account and a per-property write budget — so a full calendar takes minutes, never seconds, and is never lost.\n  whatWeDo: We coalesce your cells into the fewest channel-manager calls, drop what did not change, pace every call, stop before the channel manager's last token, and back off on its Retry-After — you never have to think about its limits, only about ours.\n\n",
   "bookings": "## bookings\nwho: Hotels that run the ZimmerStack PMS and their OWN booking engine: hand us the reservation your website sold and it lands in the PMS exactly as a front-desk booking — guest, folio, inventory, channels.\npricing: You price the stay. Send the nightly rate you charged per room; we store it and never re-quote. currency must equal the property's.\ninventory: Availability is checked inside the booking transaction under the property's inventory lock (a sold-out night is 409 NO_AVAILABILITY, nothing written). The inventory event commits with the booking; the drain pushes the new counts to every connected channel within seconds.\nidempotency: externalReference is YOUR reservation id and is unique per property: the same value again from the same key (or the key it was rotated from), while that booking is live, returns the same booking with HTTP 200 and replay: true. Use it on every retry. A reference another key already used on this property, or one that belongs to a booking you cancelled, is 409 EXTERNAL_REFERENCE_REUSED: after a cancel, the new stay needs a new reference.\npayments: A payment is recorded only when the key holds bookings:payments and never above the stay total. Nothing collected = omit payment; the desk collects at check-in.\nguest: By default the guest hears from YOUR site only; the owner can switch on our confirmation per property (admin → Developers → Settings).\ncancel: POST /bookings/{bookingId}/cancel cancels the whole booking and re-opens its nights on the channels; a booking already checked in is 409 BOOKING_NOT_CANCELLABLE. Date or room changes: cancel and re-create under a NEW externalReference (a modify endpoint is planned).\nscope: A key reads and cancels only the bookings it (or the key it was rotated from) created on its property; another key's, front-desk and OTA bookings are never visible (BOOKING_NOT_FOUND).\n\n",
   "compatibility": "## compatibility\npromise: v1 never breaks. It only grows: new routes, new optional request fields, new fields and new values in answers, new headers. Ignore what you do not know: an unknown field, an unknown data.code (treat it by its HTTP status), an unknown budget name in RateLimit.\nneverWithoutNotice: A route's path and method; a field's name, type and meaning; what is required and what is optional; a data.code and the HTTP status it comes with; the units of money and dates; the names key and key-writes in the RateLimit headers; the idempotency rules.\ndeprecation: Something we would rather you stopped using is deprecated, not removed: it keeps working, and every answer that involved it carries Deprecation (RFC 9745: the instant it became deprecated, \"@\" and Unix seconds) and a Link with rel=\"deprecation\" to the page that names the replacement.\nsunset: A removal gets at least 12 months' notice: from the day it is announced (the changelog, an email to every partner with a live key, the compatibility page) every answer that involved it also carries Sunset (RFC 8594: the instant it stops working), never less than 12 months after the announcement.\nnumbers: A budget's quota is a number, not a shape: it can change, and is announced in the changelog. Read RateLimit and GET /limits instead of hard-coding one. Tightening a budget live integrations are using gets notice like a removal.\nversions: There is no /v2 and no dated version per key: what comes next is an edition of v1, never a migration.\nnoticeMonths: 12\npage: https://docs.zimmerstack.com/compatibility\ndeprecations:\n  - id: rate-plan-default-rate-minor · what: defaultRateMinor on PUT /catalog/rate-plans (the standing price in hundredths of the currency's unit) · use: defaultRate: the same price in major units (4500 or \"4500.00\"), like every rate you send · deprecatedOn: 2026-11-16 · sunsetAnnouncedOn: null · sunsetOn: null · headers: {\"Deprecation\":\"@1794787200\",\"Sunset\":null}\n\n",
   "limitsTable": "## limitsTable\nwhat: Every budget and cap an integration can meet, one row each. kind budget: a window the key guard or a route measures. kind shield: a budget over an hour or a day (x-zimmerstack.shield); its quota is the least any property gets when atLeast is true. kind cap: the most one request may carry, or the most of a thing that may exist. GET /limits answers the same rows for your key with what is left and when it refills.\nlive: GET /limits\nrows:\n  - scope: api-address · header: api-address · kind: budget · per: address, on each API machine · window: 60 s fixed · windowSeconds: 60 · quota: 1200 · unit: requests · atLeast: false · counts: every request to any ZimmerStack API route from one address (an IPv6 /56 counts as one address), counted on each API machine: the guard in front of everything, the Connect API included\n  - scope: ip · header: ip · kind: budget · per: address · window: 60 s sliding · windowSeconds: 60 · quota: 240 · unit: requests · atLeast: false · counts: requests from one address (an IPv6 /56 counts as one address) that carry no key verified from it in the last ten minutes, checked before the key is read. A key that has authenticated from that address is counted against its own budgets, not here\n  - scope: ip-auth · header: ip-auth · kind: budget · per: address · window: 60 s sliding · windowSeconds: 60 · quota: 20 · unit: failed authentications · atLeast: false · counts: 401 answers, and 403 IP_NOT_ALLOWED, to one address; past it the address's unverified requests are refused before any lookup. A key that authenticated from that address in the last ten minutes keeps working\n  - scope: key-auth · header: key-auth · kind: budget · per: address and key · window: 60 s sliding · windowSeconds: 60 · quota: 5 · unit: failed authentications · atLeast: false · counts: 401 and 403 IP_NOT_ALLOWED answers to one key (its first twelve characters) from one address; past it that key is refused from that address before any lookup, so one revoked key never uses up its address's budget\n  - scope: global-unauthenticated · header: global-unauthenticated · kind: budget · per: everyone without a verified key · window: 60 s sliding · windowSeconds: 60 · quota: 1200 · unit: requests · atLeast: false · counts: requests from every address together that carry no recently verified key and so cost a key lookup: the most a flood of made-up keys can ask of the database\n  - scope: requests · header: key · kind: budget · per: key · window: 60 s sliding · windowSeconds: 60 · quota: 120 · unit: requests · atLeast: false · counts: every request on one key\n  - scope: writes · header: key-writes · kind: budget · per: key · window: 60 s sliding · windowSeconds: 60 · quota: 30 · unit: writes · atLeast: false · counts: every request on one key that is not a GET (PUT, POST and DELETE); a dry run (dryRun: true) is a write here\n  - scope: property · header: property · kind: budget · per: property (all its keys) · window: 60 s sliding · windowSeconds: 60 · quota: 300 · unit: requests · atLeast: false · counts: every request on all of a property's keys together (five keys are not five budgets)\n  - scope: property-writes · header: property-writes · kind: budget · per: property (all its keys) · window: 60 s sliding · windowSeconds: 60 · quota: 60 · unit: writes · atLeast: false · counts: every request that is not a GET on all of a property's keys together\n  - scope: cells · header: cells · kind: budget · per: property (all its keys) · window: 60 s sliding · windowSeconds: 60 · quota: 20000 · unit: cells · atLeast: false · counts: cells a property's writes name after range expansion, charged before anything is read or written. A dry run is charged the same cells as the write it previews; a close or a reopen (POST /availability/close) is charged the room type's count and each of its rate plans for every night\n  - scope: company · header: company · kind: budget · per: company key (all its hotels) · window: 60 s sliding · windowSeconds: 60 · quota: 1200 · unit: requests · atLeast: false · counts: every request on one company key, across all its hotels (each hotel keeps its own key and property budgets too)\n  - scope: global · header: global · kind: budget · per: everyone · window: 60 s sliding · windowSeconds: 60 · quota: 3000 · unit: requests · atLeast: false · counts: every authenticated request on the Connect API, all keys together; test keys count in a ceiling of their own of the same size, so a sandbox never spends what live hotels use\n  - scope: bookings · header: bookings · kind: budget · per: key · window: 60 s sliding · windowSeconds: 60 · quota: 20 · unit: bookings · atLeast: false · counts: POST /bookings on one key\n  - scope: property-bookings · header: property-bookings · kind: budget · per: property (all its keys) · window: 60 s sliding · windowSeconds: 60 · quota: 40 · unit: bookings · atLeast: false · counts: POST /bookings on all of a property's keys together\n  - scope: property-bookings-day · header: null · kind: budget · per: property (all its keys) · window: rolling 24 hours · windowSeconds: 86400 · quota: 500 · unit: bookings · atLeast: false · counts: POST /bookings per property per ROLLING 24 HOURS (not per minute); the owner can raise it per property\n  - scope: direct-cancels · header: direct-cancels · kind: budget · per: key · window: 60 s sliding · windowSeconds: 60 · quota: 10 · unit: cancels · atLeast: false · counts: POST /direct-bookings/{bookingId}/cancel on one key (a replay is not counted)\n  - scope: property-direct-cancels-day · header: null · kind: budget · per: property (all its keys) · window: rolling 24 hours · windowSeconds: 86400 · quota: 50 · unit: cancels · atLeast: false · counts: POST /direct-bookings/{bookingId}/cancel per property per ROLLING 24 HOURS (not per minute)\n  - scope: cells-hour · header: null · kind: shield · per: property (all its keys) · window: one clock hour (UTC) · windowSeconds: 3600 · quota: 10000 · unit: changed cells · atLeast: true · counts: changed cells, all of a property's keys together. At least this many; a larger property gets two of its own full calendars an hour. A dry run changes nothing and is never counted here\n  - scope: cells-day · header: null · kind: shield · per: property (all its keys) · window: rolling 24 hours · windowSeconds: 86400 · quota: 30000 · unit: changed cells · atLeast: true · counts: changed cells, all of a property's keys together. At least this many; a larger property gets six of its own full calendars a day. A dry run changes nothing and is never counted here\n  - scope: vendor-cells-day · header: null · kind: shield · per: software vendor (all its hotels) · window: rolling 24 hours · windowSeconds: 86400 · quota: 150000 · unit: changed cells · atLeast: true · counts: a software vendor's changed cells across all its hotels (company keys and keys it minted). At least this many, plus 15,000 for each hotel it serves; a sandbox is never counted here\n  - scope: shield-lane · header: null · kind: shield · per: property (all its keys) · window: one clock hour (UTC) · windowSeconds: 3600 · quota: 500 · unit: closing cells · atLeast: true · counts: cells of writes that only close inventory, accepted while the property is out of budget or paused (the safety lane). At least this many; sixty nights of every room type\n  - scope: structure-creates · header: null · kind: shield · per: property · window: 60 s sliding · windowSeconds: 60 · quota: 20 · unit: new room types and rate plans · atLeast: false · counts: new room types and rate plans per property; a row already here that the write puts on the channel manager counts when it gets there, never when the answer's notice says it could not; also the most one request may create (TOO_MANY_NEW_ENTITIES)\n  - scope: structure-creates-day · header: null · kind: shield · per: property · window: rolling 24 hours · windowSeconds: 86400 · quota: 300 · unit: new room types and rate plans · atLeast: false · counts: new room types and rate plans per property\n  - scope: structure-edits-day · header: null · kind: shield · per: property · window: rolling 24 hours · windowSeconds: 86400 · quota: 300 · unit: changed room types and rate plans · atLeast: false · counts: changed room types and rate plans per property\n  - scope: structure-deletes-day · header: null · kind: shield · per: property · window: rolling 24 hours · windowSeconds: 86400 · quota: 60 · unit: deleted room types and rate plans · atLeast: false · counts: deleted room types and rate plans per property\n  - scope: vendor-structure-creates-day · header: null · kind: shield · per: software vendor (all its hotels) · window: rolling 24 hours · windowSeconds: 86400 · quota: 500 · unit: new room types and rate plans · atLeast: true · counts: a software vendor's new room types and rate plans across all its hotels\n  - scope: vendor-remote-properties-day · header: null · kind: shield · per: software vendor · window: rolling 24 hours · windowSeconds: 86400 · quota: 10 · unit: hotels · atLeast: false · counts: hotels a software vendor puts on the channel manager for the first time\n  - scope: vendor-property-removals-day · header: null · kind: shield · per: software vendor · window: rolling 24 hours · windowSeconds: 86400 · quota: 10 · unit: hotels · atLeast: false · counts: hotels a software partner removes (DELETE /properties/{propertyId}, and Remove hotel in the partner portal); a sandbox is never counted\n  - scope: partner-new-properties-hour · header: null · kind: shield · per: software partner · window: one hour · windowSeconds: 3600 · quota: 20 · unit: hotels · atLeast: false · counts: hotels a partner adds, POST /properties and the partner portal's form together; a sandbox is never counted\n  - scope: partner-new-sandboxes-hour · header: null · kind: shield · per: software partner · window: rolling hour · windowSeconds: 3600 · quota: 30 · unit: sandboxes · atLeast: false · counts: sandboxes a partner makes with a test key (POST /properties), counted when one is made; the partner portal's own sandbox button is not counted\n  - scope: connect-links-hour · header: null · kind: shield · per: property · window: rolling hour · windowSeconds: 3600 · quota: 10 · unit: connect links · atLeast: false · counts: one-time connect links a software partner makes for one hotel (POST /connect-links), every booking site together; a link that was withdrawn or ran out still counts\n  - scope: partner-connect-links-hour · header: null · kind: shield · per: software partner · window: rolling hour · windowSeconds: 3600 · quota: 120 · unit: connect links · atLeast: false · counts: one-time connect links a software partner makes across all its hotels (POST /connect-links)\n  - scope: modifier-changes-day · header: null · kind: shield · per: property · window: rolling 24 hours · windowSeconds: 86400 · quota: 6 · unit: changes · atLeast: false · counts: changes to a channel's price modifier per property (PUT /channels/{channelId}/modifier); steps the channel already holds are not counted\n  - scope: rate-resends-day · header: null · kind: shield · per: property · window: rolling 24 hours · windowSeconds: 86400 · quota: 3 · unit: re-sends · atLeast: false · counts: times a property's prices are sent to the channels again (POST /rates/resend)\n  - scope: partner-support-tickets-day · header: null · kind: shield · per: software partner · window: rolling 24 hours · windowSeconds: 86400 · quota: 20 · unit: tickets · atLeast: false · counts: support tickets a partner opens (POST /support-tickets), both key modes together; a replayed idempotency key is not counted\n  - scope: partner-support-messages-hour · header: null · kind: shield · per: software partner · window: rolling hour · windowSeconds: 3600 · quota: 60 · unit: messages · atLeast: false · counts: messages a partner adds to its support tickets (POST /support-tickets/{ticketId}/messages)\n  - scope: maxUpdatesPerRequest · header: null · kind: cap · per: request · window: one request · windowSeconds: null · quota: 1000 · unit: entries · atLeast: false · counts: entries in one updates array (400 TOO_MANY_UPDATES past it)\n  - scope: maxCellsPerRequest · header: null · kind: cap · per: request · window: one request · windowSeconds: null · quota: 5000 · unit: cells · atLeast: false · counts: cells (entity × night) one request may name after range expansion (400 TOO_MANY_CELLS past it)\n  - scope: maxBodyBytes · header: null · kind: cap · per: request · window: one request · windowSeconds: null · quota: 1048576 · unit: bytes · atLeast: false · counts: the JSON body; larger is 413 PAYLOAD_TOO_LARGE before a byte is validated\n  - scope: horizonDays · header: null · kind: cap · per: request · window: one request · windowSeconds: null · quota: 500 · unit: nights · atLeast: false · counts: the last writable night and the last bookable arrival: today + this many, in the property's calendar (400 HORIZON past it)\n  - scope: maxNightsPerBooking · header: null · kind: cap · per: request · window: one request · windowSeconds: null · quota: 90 · unit: nights · atLeast: false · counts: nights in one POST /bookings\n  - scope: newEntitiesPerRequest · header: null · kind: cap · per: request · window: one request · windowSeconds: null · quota: 20 · unit: new room types and rate plans · atLeast: false · counts: new room types or rate plans one structure write may create (400 TOO_MANY_NEW_ENTITIES past it)\n  - scope: maxRoomTypes · header: null · kind: cap · per: property · window: one request · windowSeconds: null · quota: 18 · unit: room types · atLeast: false · counts: live room types on a hotel (a vacation rental has figures of its own, on GET /limits): 409 CATALOG_LIMIT_REACHED past it\n  - scope: maxRatePlans · header: null · kind: cap · per: property · window: one request · windowSeconds: null · quota: 180 · unit: rate plans · atLeast: false · counts: live rate plans on a hotel: 409 CATALOG_LIMIT_REACHED past it\n  - scope: maxActiveKeysPerProperty · header: null · kind: cap · per: property · window: one request · windowSeconds: null · quota: 5 · unit: keys · atLeast: false · counts: active hotel keys on one property (409 KEY_LIMIT past it)\n  - scope: maxActiveCompanyKeys · header: null · kind: cap · per: software partner · window: one request · windowSeconds: null · quota: 5 · unit: keys · atLeast: false · counts: active company keys of one software partner\n  - scope: maxSandboxes · header: null · kind: cap · per: software partner · window: one request · windowSeconds: null · quota: 5 · unit: sandboxes · atLeast: false · counts: sandboxes one software partner may hold at once\n  - scope: maxAllowedCidrs · header: null · kind: cap · per: key · window: one request · windowSeconds: null · quota: 20 · unit: addresses or ranges · atLeast: false · counts: entries in one key's address allowlist\n  - scope: idempotencyRetentionDays · header: null · kind: cap · per: key · window: one request · windowSeconds: null · quota: 7 · unit: days · atLeast: false · counts: how long an x-idempotency-key replays its first answer\n  - scope: maxSupportMessageChars · header: null · kind: cap · per: request · window: one request · windowSeconds: null · quota: 5000 · unit: characters · atLeast: false · counts: characters in one support ticket message, the first included (400 VALIDATION past it)\n  - scope: maxSupportTicketProperties · header: null · kind: cap · per: request · window: one request · windowSeconds: null · quota: 200 · unit: hotels · atLeast: false · counts: hotels one support ticket may name in propertyIds; past it send allProperties (400 VALIDATION)\n\n",
   "budgets-and-standing": "## shield\nwhat: On top of the per-minute budgets, every property has budgets over an hour and a day, hard limits on its structure, and a standing ZimmerStack can change. They exist because every changed cell is forwarded by the channel manager to every connected channel: an integration that re-sends, flaps or loops is the hotel's and the channels' problem within a minute. GET /property carries this property's own figures (limits), what it has used (usage) and where it stands (shield).\ncounted: A budget counts CHANGED cells: cells whose value differs from our record. Re-sending a calendar we already hold costs nothing here. So send on change, in ranges.\ncalendar:\n  what: One full calendar of a property is (2 × its rate plans + its room types) × 500 nights: a price and a stay-rule cell for every plan night, an availability cell for every room-type night. The figures in the table are the least any property gets; a larger one gets whole calendars.\n  horizonDays: 500\n  perHour: 2\n  perDay: 6\n  vendorPerDayBase: 150000\n  vendorPerDayPerHotel: 15000\n  perProperty: Every key on a property spends the same budget: a second key, or a company key beside a hotel key, is not a second budget.\nbudgets:\n  - scope: cells-hour · window: one clock hour (UTC) · floor: 10000 · counts: changed cells, all of a property's keys together. At least this many; a larger property gets two of its own full calendars an hour. A dry run changes nothing and is never counted here\n  - scope: cells-day · window: rolling 24 hours · floor: 30000 · counts: changed cells, all of a property's keys together. At least this many; a larger property gets six of its own full calendars a day. A dry run changes nothing and is never counted here\n  - scope: vendor-cells-day · window: rolling 24 hours · floor: 150000 · counts: a software vendor's changed cells across all its hotels (company keys and keys it minted). At least this many, plus 15,000 for each hotel it serves; a sandbox is never counted here\n  - scope: shield-lane · window: one clock hour (UTC) · floor: 500 · counts: cells of writes that only close inventory, accepted while the property is out of budget or paused (the safety lane). At least this many; sixty nights of every room type\n  - scope: structure-creates · window: 60 s sliding · floor: 20 · counts: new room types and rate plans per property; a row already here that the write puts on the channel manager counts when it gets there, never when the answer's notice says it could not; also the most one request may create (TOO_MANY_NEW_ENTITIES)\n  - scope: structure-creates-day · window: rolling 24 hours · floor: 300 · counts: new room types and rate plans per property\n  - scope: structure-edits-day · window: rolling 24 hours · floor: 300 · counts: changed room types and rate plans per property\n  - scope: structure-deletes-day · window: rolling 24 hours · floor: 60 · counts: deleted room types and rate plans per property\n  - scope: vendor-structure-creates-day · window: rolling 24 hours · floor: 500 · counts: a software vendor's new room types and rate plans across all its hotels\n  - scope: vendor-remote-properties-day · window: rolling 24 hours · floor: 10 · counts: hotels a software vendor puts on the channel manager for the first time\n  - scope: vendor-property-removals-day · window: rolling 24 hours · floor: 10 · counts: hotels a software partner removes (DELETE /properties/{propertyId}, and Remove hotel in the partner portal); a sandbox is never counted\n  - scope: partner-new-properties-hour · window: one hour · floor: 20 · counts: hotels a partner adds, POST /properties and the partner portal's form together; a sandbox is never counted\n  - scope: partner-new-sandboxes-hour · window: rolling hour · floor: 30 · counts: sandboxes a partner makes with a test key (POST /properties), counted when one is made; the partner portal's own sandbox button is not counted\n  - scope: connect-links-hour · window: rolling hour · floor: 10 · counts: one-time connect links a software partner makes for one hotel (POST /connect-links), every booking site together; a link that was withdrawn or ran out still counts\n  - scope: partner-connect-links-hour · window: rolling hour · floor: 120 · counts: one-time connect links a software partner makes across all its hotels (POST /connect-links)\n  - scope: modifier-changes-day · window: rolling 24 hours · floor: 6 · counts: changes to a channel's price modifier per property (PUT /channels/{channelId}/modifier); steps the channel already holds are not counted\n  - scope: rate-resends-day · window: rolling 24 hours · floor: 3 · counts: times a property's prices are sent to the channels again (POST /rates/resend)\n  - scope: partner-support-tickets-day · window: rolling 24 hours · floor: 20 · counts: support tickets a partner opens (POST /support-tickets), both key modes together; a replayed idempotency key is not counted\n  - scope: partner-support-messages-hour · window: rolling hour · floor: 60 · counts: messages a partner adds to its support tickets (POST /support-tickets/{ticketId}/messages)\ncaps:\n  maxRoomTypes: 18\n  maxRatePlans: 180\n  why: Each cap sits a tenth under what the channel manager includes for that kind of property before it bills extra, so an integration never runs a hotel into overage. GET /property carries this property's own caps.\n  byCategory:\n    - category: hotel · maxRoomTypes: 18 · maxRatePlans: 180 · ratePlansPerRoomType: null\n    - category: vacation rental · maxRoomTypes: 45 · maxRatePlans: 405 · ratePlansPerRoomType: 9\n  onRefusal: 409 CATALOG_LIMIT_REACHED (details.limit, details.current, details.requested). Delete what is unused, or ask ZimmerStack support.\nonRefusal: 429 RATE_LIMITED with data.scope naming the budget and Retry-After in whole seconds: to the next clock hour for cells-hour, until enough of the day has aged out for a rolling day. Nothing was written. Wait, then send what still needs to change.\nsafetyLane: A hotel must not oversell because its integration ran out of budget or was paused. A write that only CLOSES inventory (a lower availability count or 0, or stopSell / closedToArrival / closedToDeparture switched on, and nothing else in the request) is still accepted in both cases, against its own hourly allowance (at least 500 cells); its 202 carries lane: true. A write that opens inventory or changes a price waits.\npriceBand:\n  what: PUT /rates takes prices in MAJOR units, and reads answer the same price as rate, a decimal string in major units (the older rateMinor beside it is hundredths of the major unit, which is not every currency's minor unit). A price below a tenth or above ten times its plan's standing price (the plan's defaultRate, or its room type's base rate) is not taken on trust: the whole request is 422 RATE_OUT_OF_BAND and nothing is written. A plan with no standing price is never judged.\n  minPct: 10\n  maxPct: 1000\n  wayOut: If the price is meant, move the plan's standing price first (PUT /catalog/rate-plans defaultRate): the band moves with it. ZimmerStack support can set a property to warn only (the 202 then carries priceWarnings) or switch its band off; the hotel's owner asks for it.\nstanding:\n  levels:\n    CLEAR: Nothing held against the integration.\n    WATCH: Something notable happened (a budget was used up). Nothing is refused.\n    PAUSED: Only writes that close inventory are accepted (the safety lane); anything else is 429 RATE_LIMITED with data.scope shield-pause and a Retry-After that ends with the pause. Set automatically for a while when the channel manager refuses the integration's values or it uses up a budget on two of three days (15 minutes, then 1 hour, 6 hours, a day), or by ZimmerStack support until released.\n    SUSPENDED: Every write is 403 WRITES_SUSPENDED until ZimmerStack support releases it.\n  frozen: 503 WRITES_FROZEN with Retry-After: ZimmerStack has paused every integration's writes at once. Rare, short, and never your integration alone.\n  never: Reads, GET /channel-bookings, webhooks and POST /bookings are never refused by any of this: a guest's reservation and its news always travel.\nrejectedValues: A rate or restriction value the channel manager itself refuses is held, not re-sent: GET /sync counts it (rates.parkedCells), its batch reads failed with the reason, and the property's other cells keep landing. Send a corrected value for those nights.\nsandbox: A sandbox meets the same budgets, limits and band on its own property, so you learn them before going live. It is never frozen and never counts against your company's budgets.\n\n",
-  "properties": "## properties\nwhat: A software partner's company key adds a hotel and removes a hotel it added, without the partner portal: POST /properties and DELETE /properties/{propertyId}. Scope properties:write, which only a company key can hold; a hotel's own key is 403 COMPANY_KEY_REQUIRED. Neither route reads X-ZS-Property.\nadd: POST /properties makes what the partner portal's \"Add a hotel\" form makes: a channel-manager hotel with its own owner account, its room types (1 to 20, each with one room-only rate plan at its defaultRate), on your invoice at your price. The owner gets their sign-in details by email; you never see them. The answer is the hotel in GET /properties' shape: name its id in X-ZS-Property from then on.\nafterAdding: The new hotel is not on the channel manager yet (channelManager: false). Your first PUT /catalog/room-types puts it there: send the same refs you gave here, or the same names, and they become those room types instead of a second set. Then send your rate plans, and your availability and rates.\nidempotency: POST /properties needs x-idempotency-key (400 IDEMPOTENCY_KEY_INVALID without one): the same key never makes a second hotel, even when the first answer was lost. A test key and a live key never share a key's answer. A 4xx answer is kept under its key for 7 days, like every verdict: once you have changed what it asked for (your billing setup done, a sandbox removed), send the request under a new key. A 429 or a 503 is never kept: send the same request, with the same key, after Retry-After.\nbilling: billing.state says where the new hotel's billing stands. ACTIVE: its billing has started and it is on your next monthly invoice (under the public price list your live hotels are counted on the 1st of each month, so the days before the next 1st are free). WAITING: the hotel is live and its billing has not started; billing.reason says why (SETUP, OVERDUE, UNPAID_LIMIT or REVIEW) and billing.message what to do. Before your first hotel, accept the price list and add your billing details in the partner portal (409 BILLING_SETUP_REQUIRED until then).\nowner: One owner account per email address. An address that already has an account is 409 OWNER_HAS_ACCOUNT: a hotel that exists already joins you when its owner enters your vendor code under Integrations.\nremove: DELETE /properties/{propertyId}?confirm=<the hotel's exact name> removes a hotel for good, in one call: its subscription is cancelled, then its channel connections, its rate plans, its room types and its listing are taken off the channel manager, your keys stop reaching it and nobody signs in to it any more. Its bookings and bills are kept. 200 when nothing is left on the channel manager; 202 when a step there is still pending, which ZimmerStack retries by itself (channelManager.state RETRYING, with the step and what is still connected). Call it again any time: once the hotel is gone the answer is 200 with replay: true and where it stands, and no confirm is needed.\nwhichHotels: Only a hotel you added and pay for, that runs the channel manager alone and is the one property of its owner's account. Anything else is 409 PROPERTY_NOT_REMOVABLE, and data.details.reason says who can do it: OWNER_ALLOWED (its owner let you in: the owner removes your access) · NOT_BILLED_TO_YOU, OTHER_PRODUCTS, SHARES_ACCOUNT (ZimmerStack removes it: write to support). A hotel you cannot reach is 404 PROPERTY_NOT_FOUND.\nrefusals: 400 CONFIRMATION_MISMATCH: confirm is not the hotel's exact name. 503 PROPERTY_BUSY: a hotel of yours is being added or removed right now, one at a time; retry after Retry-After. 503 PROPERTY_BUSY with a Retry-After of an hour on a removal: it has started and could not finish, ZimmerStack has been told and finishes it, and nothing is needed from you; call again later for where it stands. 429 RATE_LIMITED with data.scope vendor-property-removals-day: the most hotels your company may remove in a day (10; a removal that had already started is finished whatever the day's count), partner-new-properties-hour: the most it may add in an hour (20), or partner-new-sandboxes-hour: the most sandboxes a test key may make in an hour (30). 503 PRICE_UNAVAILABLE: the hotel could not be priced just now; retry. 400 VALIDATION whose message says the request is held (data.details.reason): the hotel could not be created from a request already on file, so sending it again, under this key or a new one, will not help; write to ZimmerStack support.\nsandbox: With a test key (zsk_test_) the same two calls make and delete one of your sandboxes (up to 5 at once; 409 SANDBOX_LIMIT beyond, and at most 30 made in any hour; 429 RATE_LIMITED with data.scope partner-new-sandboxes-hour beyond): the body is checked exactly as a live one, the sandbox takes its room types, and nothing is billed or reaches a channel. Its name ends in (sandbox) and is at most 60 characters: confirm a delete with the name the answer returned.\n\n",
+  "properties": "## properties\nwhat: A software partner's company key adds a hotel, changes a hotel it added and removes a hotel it added, without the partner portal: POST /properties, PATCH /properties/{propertyId} and DELETE /properties/{propertyId}. Scope properties:write, which only a company key can hold; a hotel's own key is 403 COMPANY_KEY_REQUIRED. None of the three reads X-ZS-Property.\nadd: POST /properties makes what the partner portal's \"Add a hotel\" form makes: a channel-manager hotel with its own owner account, its room types (1 to 20, each with one room-only rate plan at its defaultRate), on your invoice at your price. The owner gets their sign-in details by email; you never see them. The answer is the hotel in GET /properties' shape: name its id in X-ZS-Property from then on.\nafterAdding: A hotel added with its room types is put on the channel manager when its billing starts (billing.state ACTIVE), usually before this request answers; channelManager says whether it is there. While it is false, a write for the hotel answers 409 CHANNEL_MANAGER_DISABLED: send its room types again with PUT /catalog/room-types (the same refs you gave here, or the same names, so they become those room types instead of a second set), or press Finish setup on the hotel's page in the partner portal. Either puts it there. Then send your other room types and rate plans, and your availability and rates.\nchange: PATCH /properties/{propertyId} changes a hotel's name and its address (line1, city, state, postalCode): only the fields you send, and the answer is the hotel in GET /properties' shape with its address and changed, the fields whose stored value moved (empty when everything you sent was already stored). It never changes the hotel's country, currency, time zone, owner or tax id: a request that names one of them is 400 VALIDATION, and so is a request that sends nothing to change. It changes the hotel's record in ZimmerStack, not the name of a listing on an OTA. Only a hotel you added: one whose owner let you in is 409 PROPERTY_NOT_CHANGEABLE (data.details.reason OWNER_ALLOWED: its owner changes it), and a hotel you cannot reach is 404 PROPERTY_NOT_FOUND. Who pays for the hotel and what else it uses are not asked, unlike a removal. With a test key it changes one of your sandboxes, whose name keeps its ending, (sandbox). x-idempotency-key is optional here, as on every write but the add.\nidempotency: POST /properties needs x-idempotency-key (400 IDEMPOTENCY_KEY_INVALID without one): the same key never makes a second hotel, even when the first answer was lost. A test key and a live key never share a key's answer. A 4xx answer is kept under its key for 7 days, like every verdict: once you have changed what it asked for (your billing setup done, a sandbox removed), send the request under a new key. A 429 or a 503 is never kept: send the same request, with the same key, after Retry-After.\nbilling: billing.state says where the new hotel's billing stands. ACTIVE: its billing has started and it is on your next monthly invoice (under the public price list your live hotels are counted on the 1st of each month, so the days before the next 1st are free). WAITING: the hotel is live and its billing has not started; billing.reason says why (SETUP, OVERDUE, UNPAID_LIMIT or REVIEW) and billing.message what to do. Before your first hotel, accept the price list and add your billing details in the partner portal (409 BILLING_SETUP_REQUIRED until then).\nowner: One owner account per email address. An address that already has an account is 409 OWNER_HAS_ACCOUNT: a hotel that exists already joins you when its owner enters your vendor code under Integrations.\nremove: DELETE /properties/{propertyId}?confirm=<the hotel's exact name> removes a hotel for good, in one call: its subscription is cancelled, then its channel connections, its rate plans, its room types and its listing are taken off the channel manager, your keys stop reaching it and nobody signs in to it any more. Its bookings and bills are kept. 200 when nothing is left on the channel manager; 202 when a step there is still pending, which ZimmerStack retries by itself (channelManager.state RETRYING, with the step and what is still connected). Call it again any time: once the hotel is gone the answer is 200 with replay: true and where it stands, and no confirm is needed.\nwhichHotels: Only a hotel you added and pay for, that runs the channel manager alone and is the one property of its owner's account. Anything else is 409 PROPERTY_NOT_REMOVABLE, and data.details.reason says who can do it: OWNER_ALLOWED (its owner let you in: the owner removes your access) · NOT_BILLED_TO_YOU, OTHER_PRODUCTS, SHARES_ACCOUNT (ZimmerStack removes it: write to support). A hotel you cannot reach is 404 PROPERTY_NOT_FOUND.\nrefusals: 400 CONFIRMATION_MISMATCH: confirm is not the hotel's exact name. 503 PROPERTY_BUSY: a hotel of yours is being added or removed right now, one at a time; retry after Retry-After. 503 PROPERTY_BUSY with a Retry-After of an hour on a removal: it has started and could not finish, ZimmerStack has been told and finishes it, and nothing is needed from you; call again later for where it stands. 429 RATE_LIMITED with data.scope vendor-property-removals-day: the most hotels your company may remove in a day (10; a removal that had already started is finished whatever the day's count), partner-new-properties-hour: the most it may add in an hour (20), or partner-new-sandboxes-hour: the most sandboxes a test key may make in an hour (30). 503 PRICE_UNAVAILABLE: the hotel could not be priced just now; retry. 400 VALIDATION whose message says the request is held (data.details.reason): the hotel could not be created from a request already on file, so sending it again, under this key or a new one, will not help; write to ZimmerStack support.\nsandbox: With a test key (zsk_test_) the same two calls make and delete one of your sandboxes (up to 5 at once; 409 SANDBOX_LIMIT beyond, and at most 30 made in any hour; 429 RATE_LIMITED with data.scope partner-new-sandboxes-hour beyond): the body is checked exactly as a live one, the sandbox takes its room types, and nothing is billed or reaches a channel. Its name ends in (sandbox) and is at most 60 characters: confirm a delete with the name the answer returned.\n\n",
   "room-types-and-rate-plans": "## structure\nwhat: PUT /catalog/room-types and PUT /catalog/rate-plans (scope catalog:write) let the PMS own the hotel's structure: an upsert by ref, your own id. A new entity is created on the channel manager at once; every later change mirrors there with retries and a nightly drift check; the answer names our id, the action and the sync status per entity. GET /catalog carries ref and sync from now on.\nadoption: A room type the owner already made with the same name (and no ref) becomes yours by ref (action: adopted); a plan likewise under the same room type. A plan never moves between room types (409 CATALOG_CONFLICT): delete it and send it again.\nswitchOn: A channel-manager-only hotel with no channel-manager property yet gets one on the first write, and the channel manager is switched on once a room type and a plan are mapped; channelManager.enabled in the answer says where it stands, reason why not.\nidempotent: Twice over: ref is the upsert key here, and the channel-manager create adopts an existing entity with the same title instead of creating it again, so a retry never duplicates on either side. Send x-idempotency-key on retries as on every write.\nnotHere: A room count after creation (it lives on the channel manager), photos, descriptions, amenities, cancellation policies and stay rules: the owner's Rooms & rates screen, or the restrictions routes.\nsandbox: On a sandbox everything lands locally and reads IN_SYNC, through the same code path.\n\n",
   "ota-bookings": "## channelBookings\nwhat: GET /channel-bookings lists the OTA bookings the channel manager delivered to the property — the SAME booking object the webhooks carry, so one parser serves both. Scope channel-bookings:read, granted separately from the ARI pair.\nsince: since is on the booking's last change (created, modified or cancelled), default the last 7 days; page with limit (≤100) and pass the answer's nextCursor as cursor while more is true. nextCursor is returned on every page, the last one included: keep it and ask with it next time, so a poller needs no clock of its own.\nmatchesWebhook: The booking is what its last event said: finance (with paymentType, virtualCard and feeAmount), guestNotes, guest.country, guest.language, amounts.paymentCollect and an OTA cancellation's reason are read from our stored copy of the revision, so a pull is never poorer than the webhook. version is the booking's current version: a copy of yours with a lower one has missed an event.\nwhy: Recover a missed webhook, or poll instead of receiving: the webhooks remain the push path, this is the pull path over the same shape.\nnever: Front-desk, booking-engine and Connect API bookings are never listed here; they are not channel bookings. The booking engine's are GET /direct-bookings.\n\n",
   "website-bookings": "## directBookings\nwhat: A hotel that sells on its own website through the ZimmerStack booking engine takes bookings no OTA sent. They reach a PMS under their own names: the webhooks direct.booking.created, direct.booking.modified and direct.booking.cancelled, and GET /direct-bookings for the pull. The booking object is the one channel.booking.* carries, so one parser serves both families.\ntellApart: channel.source is DIRECT_WEB, channel.sourceGroup is DIRECT and channel.otaName is \"Website\". finance is null (no OTA, no commission); amounts.paymentCollect is \"property\"; amounts.paid is what the guest paid online, amounts.balanceDue what the desk collects.\nsubscribe: An endpoint receives them only when it lists the event types, each ticked on its own. An endpoint registered before a type existed receives none of it until its owner ticks it: direct.booking.modified was added on 21 Nov 2026, so an endpoint that listed created and cancelled before then still receives exactly those two.\napplyFirst: A website booking takes one room off the count the channels hold, at once. A PMS that pushes absolute room counts must apply the booking to its own calendar BEFORE its next PUT /availability, or that push puts the sold room back on sale. Read GET /direct-bookings before a full push to catch anything a webhook has not delivered yet.\nevents: created: a nightly or an hourly booking the guest confirmed. modified: the hotel recorded in ZimmerStack that the guest did not arrive (a no-show), or undid that. The booking is not cancelled, so status stays CONFIRMED and the payment is untouched; stayStatus and each room's status say NOSHOW (the nights are on sale again on every channel: free the room) or, after an undo, UPCOMING again (the nights are taken again: hold the room). changes names what moved (\"stayStatus\", \"rooms[0].status\") and previous carries the booking as it read before, stayStatus included. cancelled: the guest cancelled on the booking page, or the hotel cancelled or deleted the booking in ZimmerStack or through POST /direct-bookings/{bookingId}/cancel; cancellation.reason says which (\"Cancelled by the guest\" or \"Cancelled by the hotel\"). A cancel your own PMS made comes back to you as this event too: match it on the booking id and treat it as already applied.\nafterwards: Anything else the hotel changes on a website booking in ZimmerStack afterwards (other dates, one room of several cancelled, a payment taken at the desk) sends no event yet; modified is a no-show and its undo only, and changes is how a later kind of change will say what it is. GET /direct-bookings lists that booking again, because since is on its last change: read it on a slow schedule too (once an hour is plenty), not only before a push. A modified or a cancelled event can also arrive for a booking whose created your endpoint never received (it ticked the types later): treat an unknown booking id as new and read it with GET /direct-bookings/{bookingId}.\npull: GET /direct-bookings takes the same since, status, limit and cursor as GET /channel-bookings and pages the same way. Scope direct-bookings:read, granted separately from channel-bookings:read. A booking deleted in ZimmerStack stays listed, as CANCELLED.\nnever: OTA bookings (GET /channel-bookings), front-desk bookings and bookings a key created (GET /bookings) are never listed here.\ncancel: POST /direct-bookings/{bookingId}/cancel cancels a whole website booking that is still UPCOMING and says what the guest gets back: refund \"policy\" (the default: what the booking's own cancellation policy gives now, exactly as if the guest cancelled on the booking page), \"full\" (everything paid online) or \"none\" (the hotel settles any money itself). The refund goes back to the guest's online payment, never more than it; the hotel's share of that payment is taken back first. The nights go back on sale on the channels, the guest gets the usual cancellation message, and direct.booking.cancelled says \"Cancelled by the hotel\". Scope direct-bookings:cancel, granted on its own and never by default. A checked-in, checked-out or no-show booking is 409 BOOKING_NOT_CANCELLABLE; an already-cancelled one answers 200 with replay: true and moves no money. Send x-idempotency-key: a retry with the same key gets the first answer back. Budgets: 10 per key per minute, 50 per property per rolling day.\nsandbox: POST /sandbox/bookings with otaName \"Website\" simulates one and sends the real direct.booking.created; its cancel sends direct.booking.cancelled. Its modify is 409 BOOKING_NOT_MODIFIABLE. POST /direct-bookings/{bookingId}/cancel works on a sandbox website booking with a test key: the nights come back and the event says \"Cancelled by the hotel\", and no money moves (refund.status NONE).\n\n",
   "event-log": "## events\nwhat: GET /events?after=&limit= is the hotel's ordered event log: every event a webhook can carry for it (OTA bookings, website bookings, channel alerts), once, oldest first. The webhooks are the nudge; the log is the truth.\nhow: Each event of a hotel has a sequence, one higher than the hotel's last. Keep the last sequence you applied and ask for everything after it: after an outage, on a schedule, or whenever a webhook arrives whose sequence is not your next one. nextAfter is your new place; more: true means ask again at once. Nothing depends on a delivery having arrived or on the order deliveries arrived in.\nitem: An item is the webhook's own envelope (id, type, occurredAt, mode, sequence, property, data, changes, previous), so one parser serves both. The same sequence rides the webhook, its redelivery and its replay.\nversion: data.booking.version is our own counter of a booking's events: 1 on its first event, one more on each later one. A higher version is a later state, whatever order deliveries arrived in.\nscopes: channel-bookings:read reads the channel events (channel.booking.*, channel.sync.*); direct-bookings:read the website's (direct.booking.*). A key with one of them sees the other family's numbers skipped: the sequence is the hotel's. With neither, 403 SCOPE_MISSING.\nretention: Kept 90 days. earliestSequence is the lowest sequence still kept: when it is more than one above your after, the events in between are gone; reconcile with GET /channel-bookings and GET /direct-bookings, then carry on from nextAfter.\nnotHere: A Test button's sample event (it has no sequence), and events from before 22 Nov 2026.\n\n",
   "webhook-endpoints": "## webhookEndpoints\nwhat: A software partner's company key manages its own company webhook endpoints without the partner portal: list, create, change (address, event types, notify email, the guest-contact switch), pause, resume, rotate the signing secret, delete, send a test of any event type, recover since an instant, redeliver one delivery and read the delivery log. Scope webhooks:manage, which only a company key can hold and which is never ticked by default; a hotel's own key is 403 COMPANY_KEY_REQUIRED. No route reads X-ZS-Property: an endpoint belongs to you, not to a hotel.\nmodes: A live key manages your live endpoints (the events of every hotel you may act on); a test key your test ones (your sandboxes' events). The other mode's endpoint is 404 WEBHOOK_ENDPOINT_NOT_FOUND. Up to three endpoints, both modes together (409 WEBHOOK_ENDPOINT_LIMIT).\nsecret: The signing secret (whsec_…) is in the answer that creates the endpoint or rotates its secret, and nowhere else: no route reads an existing secret back. After a rotation both secrets sign for 24 hours.\nguestContact: An endpoint made by API starts with guest contact off. PATCH includeGuestContact to switch it at any time: it applies to every delivery made from then on.\nevents: With no eventTypes a new endpoint takes the OTA booking events and both channel.sync events. The website booking events (direct.booking.*) are ticked on their own.\npause: A paused endpoint's events are held and go out oldest first on resume (data.heldEvents). An endpoint ZimmerStack suspended is resumed by ZimmerStack (403 WEBHOOK_ENDPOINT_SUSPENDED); it drops events, which recover queues again.\ntest: POST /webhook-endpoints/{endpointId}/test with eventType: any type an endpoint can receive, or zimmerstack.ping (the default). The sample says mode: test and carries no sequence. On a sandbox the real events are made by POST /sandbox/… (x-zimmerstack.sandbox).\nrecover: POST /webhook-endpoints/{endpointId}/recover with since queues again every subscribed event since then that failed or never had a delivery: at most 90 days back and 10,000 events a run (truncated: true means run it again). A live endpoint is sent only the events of hotels you could act on then and still can. GET /events is the other way to catch up, and needs no endpoint at all.\nidempotency: Send x-idempotency-key on the writes, as on every write: a retry with the same key gets the first answer back. A 4xx is kept under its key for 7 days, so after changing what it asked for (resuming a paused endpoint, removing one of three) send the request under a new key. A 429 or a 503 is never kept.\nrefusals: 404 WEBHOOK_ENDPOINT_NOT_FOUND · 404 WEBHOOK_DELIVERY_NOT_FOUND · 409 WEBHOOK_ENDPOINT_LIMIT · 409 WEBHOOK_ENDPOINT_NOT_ACTIVE (test, recover and redeliver need an active endpoint) · 403 WEBHOOK_ENDPOINT_SUSPENDED · 403 WEBHOOK_ACCESS_ENDED (the hotel ended your access before the event was sent) · 410 WEBHOOK_PAYLOAD_EXPIRED (the event is older than 90 days) · 400 VALIDATION with data.details.reason for an address, event type, email or date we refuse · 429 RATE_LIMITED with data.scope webhook-endpoint (so many tests, rotations, recovers or redeliveries an hour) · 503 WEBHOOKS_UNAVAILABLE.\nportalOnly: Reading an existing signing secret, and everything about company keys, prices and team members, stay with a person in the partner portal.\n\n",
-  "connect-links": "## connectLinks\nwhat: A one-time connect link lets the hotel's own person connect ONE booking site for ONE hotel, without your partner portal and without you ever holding an OTA password. Your company key asks for the link (POST /connect-links), you send its url to the hotel, and on our hosted page that person signs in to the booking site, confirms every room and rate match and presses Start selling. You hear channel.connect.completed, or channel.connect.expired if the link ran out first.\nscope: channels:connect, which only a company key can hold and which is never ticked by default: a key with it can start a hotel selling on a booking site. It is given by someone in your company who may act for hotels. A hotel's own key is 403 COMPANY_KEY_REQUIRED. No route reads X-ZS-Property: the hotel is propertyId in the create's body. A live key only: a test key is 409 LIVE_KEY_REQUIRED.\nnever: The API takes no OTA credential and no room or rate match, in any field: the create's body is the hotel, the booking site and three options, and an unknown field is 400 VALIDATION. Matching is done by a person, on the page.\nlink: The url opens once and is in the answer that makes the link, nowhere else: we keep a hash of its token. It opens for 72 hours unless expiresInHours says otherwise (up to 168); once opened, the page has 120 minutes. A second link for the same hotel and booking site withdraws an earlier one nobody opened, and picks up a connection an earlier link saved without starting it. A replay of the create (the same x-idempotency-key) answers url: null: make a new link.\npage: The page can do one thing: this connection for this hotel. It cannot pause or remove a connection, read the hotel's other connections, or change a price. It carries your brand when ZimmerStack serves your hotels under it; otherwise it names your company as the sender. Everything it does is on the hotel's activity log, naming the key that made the link.\nhotelStep: Most booking sites ask the hotel to name its connectivity provider in their extranet first. hotelStep, in the create's answer, is that step in a sentence, with our connectivity partner's name as the booking site lists it: show it in your own screen, or put it in your message to the hotel. The page itself does not print the name.\nlimits: One connection per hotel and booking site unless ZimmerStack allowed that hotel more: the page says so if the hotel already has one. 10 links an hour per hotel and 120 an hour across your hotels (429 RATE_LIMITED, data.scope connect-links-hour or partner-connect-links-hour).\nstatus: GET /connect-links/{linkId}: pending (made, not opened), opened (someone is on the page), completed (Start selling was pressed), expired, revoked. POST /connect-links/{linkId}/revoke withdraws a link; an open page stops at its next step.\nwebhooks: channel.connect.completed and channel.connect.expired are event types of their own: tick them on your endpoint (PATCH /webhook-endpoints/{endpointId}). Both are in the hotel's event log (GET /events) with a sequence. completed carries the connection's id (GET /channels) and what became of the booking site's upcoming bookings; expired says whether anyone opened the link and whether a connection was saved, paused.\nrefusals: 404 PROPERTY_NOT_FOUND (not a hotel this key may act on) · 409 CHANNEL_NOT_AVAILABLE (details.reason switched_off or not_offered_here) · 409 CHANNEL_MANAGER_DISABLED (send the hotel's room types and rate plans first) · 409 LIVE_KEY_REQUIRED · 404 CONNECT_LINK_NOT_FOUND · 429 RATE_LIMITED · 503 CONNECT_LINKS_UNAVAILABLE.\n\n",
+  "connect-links": "## connectLinks\nwhat: A one-time connect link lets the hotel's own person connect ONE booking site for ONE hotel, without your partner portal. Your company key asks for the link (POST /connect-links) and you send its url to the hotel. On our hosted page that person types the hotel's id at the booking site (MakeMyTrip and Goibibo also the access token they give), confirms every room and rate match and presses Start selling. Nobody signs in to a booking site on the page, except on Airbnb: the host signs in on Airbnb's own page and allows the connection. Only Airbnb is connected from the link alone; every other booking site needs the hotel's step there first (hotelStep). You hear channel.connect.completed, or channel.connect.expired if the link ran out first.\nscope: channels:connect, which only a company key can hold and which is never ticked by default: a key with it can start a hotel selling on a booking site. It is given by someone in your company who may act for hotels. A hotel's own key is 403 COMPANY_KEY_REQUIRED. No route reads X-ZS-Property: the hotel is propertyId in the create's body. A live key only: a test key is 409 LIVE_KEY_REQUIRED.\nnever: The API takes no booking-site detail (no hotel id there, no access token, no password) and no room or rate match, in any field: the create's body is the hotel, the booking site and three options, and an unknown field is 400 VALIDATION. The details and the matching are given by a person, on the page.\nlink: The url opens once and is in the answer that makes the link, nowhere else: we keep a hash of its token. It opens for 72 hours unless expiresInHours says otherwise (up to 168); once opened, the page has 120 minutes. A second link for the same hotel and booking site withdraws an earlier one nobody opened, and picks up a connection an earlier link saved without starting it. A replay of the create (the same x-idempotency-key) answers url: null: make a new link.\npage: The page can do one thing: this connection for this hotel. It cannot pause or remove a connection, read the hotel's other connections, or change a price. It carries your brand when ZimmerStack serves your hotels under it; otherwise it names your company as the sender. Everything it does is on the hotel's activity log, naming the key that made the link.\nhotelStep: Every booking site but Airbnb must first accept our connectivity partner for the hotel: in its extranet (Booking.com, Agoda, Expedia) or through its support (MakeMyTrip and Goibibo, which then give an access token; Trip.com; Yatra; Hostelworld for a hostel new to channel managers). It can take days, and no API call does it. hotelStep, in the create's answer, is that step in a sentence, with our connectivity partner's name as the booking site lists it: send it to the hotel first, and send the url once the hotel has done it (an opened page has 120 minutes; a link that ran out meanwhile is replaced by a new one). It is null for Airbnb. The page itself does not print the name.\nlimits: One connection per hotel and booking site unless ZimmerStack allowed that hotel more: the page says so if the hotel already has one. 10 links an hour per hotel and 120 an hour across your hotels (429 RATE_LIMITED, data.scope connect-links-hour or partner-connect-links-hour).\nstatus: GET /connect-links/{linkId}: pending (made, not opened), opened (someone is on the page), completed (Start selling was pressed), expired, revoked. POST /connect-links/{linkId}/revoke withdraws a link; an open page stops at its next step.\nwebhooks: channel.connect.completed and channel.connect.expired are event types of their own: tick them on your endpoint (PATCH /webhook-endpoints/{endpointId}). Both are in the hotel's event log (GET /events) with a sequence. completed carries the connection's id (GET /channels) and what became of the booking site's upcoming bookings; expired says whether anyone opened the link and whether a connection was saved, paused.\nrefusals: 404 PROPERTY_NOT_FOUND (not a hotel this key may act on) · 409 CHANNEL_NOT_AVAILABLE (details.reason switched_off or not_offered_here) · 409 CHANNEL_MANAGER_DISABLED (send the hotel's room types and rate plans first) · 409 LIVE_KEY_REQUIRED · 404 CONNECT_LINK_NOT_FOUND · 429 RATE_LIMITED · 503 CONNECT_LINKS_UNAVAILABLE.\n\n",
   "going-live": "## goLive\nwhat: Going live makes your software the source of truth for a hotel: from then on every price, stay rule and room count you send is pushed to its booking sites. A hotel you add with POST /properties is live from the start. Any other hotel (one whose owner let you in by your code) goes live with POST /go-live, once GET /readiness says it is ready. Both name the hotel in X-ZS-Property.\nwhy: A hotel that ran on our screens first has a record full of prices nobody chose for the booking sites. Switched on without a check, those would be sent over the hotel's real prices. The report is how we know that will not happen.\nchecks: GET /readiness answers four checks, each passed or not, with a sentence and what to do: channel_manager (the hotel is on the channel manager) · catalog_linked (so is every room type and rate plan) · prices_hold (ZimmerStack's own pricing does not overwrite a price you send) · nothing_stale, which passes one of two ways: our record matches the channels for the next 365 nights (nothing waiting to be sent, nothing different from what the channel manager was read holding in the last 48 hours), or your software has sent the next 365 nights first. It reads our record only, so ask as often as you like.\nsendFirst: To send a full year first: PUT /rates for every rate plan and night, each request carrying the header X-ZS-Before-Go-Live: true. Without the header a hotel that is not live answers 409 ARI_NOT_AUTHORITATIVE, as before. Prices and stay rules sent ahead are stored and wait (the answer says heldUntilGoLive: true). Room counts are different: until the hotel is live, a count that lowers what is on sale is sent to the booking sites at once (a held count would oversell a room), and a count that raises it is refused in the answer's rejected list, because the hotel's own people may still be running its counts. Send your room counts again right after going live.\nswitch: POST /go-live needs ari:write. Ready: 200 with live: true. Not ready: 409 NOT_READY with the checks that did not pass, and that refusal is never kept under an x-idempotency-key, so send the same request again once you have fixed them. Already live: 200 with replay: true. It is written on the hotel's activity log and in our audit as an automated act, naming your key.\nafter: Nights past the next 365 that your software never wrote are sent closed until it writes them. The hotel's owner can end your access at any time; switching a hotel back is done by ZimmerStack support.\n\n",
   "hotel-keys": "## hotelKeys\nwhat: A company key lists, mints, rotates and revokes the keys you made on a hotel, without your partner portal: GET and POST /properties/{propertyId}/keys, POST …/keys/{keyId}/rotate and …/revoke. The hotel is in the path; X-ZS-Property is not read.\nscope: keys:manage, which only a company key can hold and which is never ticked by default: a key with it mints more keys. A hotel's own key is 403 COMPANY_KEY_REQUIRED.\nreach: The hotels you added and still have access to (a live key), or your sandboxes (a test key). Only the keys you made: a hotel's own keys are its owner's and are never listed, rotated or revoked here. A company key is never made, rotated or revoked by API: that stays with a person in your partner portal.\nsecret: The secret is in the answer that mints or rotates a key and nowhere else: we keep its hash. A replay of that request (the same x-idempotency-key) answers key: null.\nrotate: A rotation makes a new key with the same name, scopes, addresses and expiry; the old one keeps answering for 24 hours (retireAt), then stops.\nrules: The rules are a hotel key's own: any scope a hotel's key may hold (never a company key's own scopes), at most 5 active keys a hotel (409 KEY_LIMIT), ari:read and ari:write only on a hotel that is live (409 ARI_NOT_AUTHORITATIVE: go live first). Every mint, rotation and revoke is on the hotel's activity log, naming the company key that did it.\nrefusals: 404 PROPERTY_NOT_FOUND · 404 KEY_NOT_FOUND · 409 KEY_LIMIT · 409 KEY_REVOKED · 409 KEY_ALREADY_ROTATING · 400 SCOPES_INVALID · 400 ALLOWED_CIDRS_INVALID · 400 REASON_REQUIRED · 400 VALIDATION.\n\n",
   "billing": "## billing\nwhat: A software partner's company key reads what its Billing page shows: GET /billing (what is owed, the onboarding fee, your property quota, money paid ahead, the days of an unpaid invoice, and what was passed on at cost), GET /billing/invoices (your issued invoices, each before and after tax, with its lines) and GET /billing/next-invoice (what your next monthly invoice is made of, hotel by hotel). Scope billing:read, which only a company key can hold and which is never ticked by default; a hotel's own key is 403 COMPANY_KEY_REQUIRED. No route reads X-ZS-Property. The same answer for a live key and a test key: a bill is your company's.\nreadOnly: Nothing here pays, accepts a price or changes billing details: those stay with a person in the partner portal. No payment link is answered.\nwhoMayGiveIt: A key that reads your bills is made by someone who may open the portal's Billing page (the account owner, an Admin). A Developer cannot make one.\nnextInvoice: Each line says how its price was reached: the rooms counted (what the hotel declared, or the most it has on sale on one night when that is more), the room band they fall in, how many of your hotels share that band (which picks a volume price), the price list it was read from, and the conversion when the list is in another currency. It is read today; the invoice reads rooms, prices and the exchange rate again on the day it is made, and that is the bill.\ncounting: A hotel is on a month's invoice when it is live on the 1st, connected to a booking site or not, in full for the month starting; a hotel added after the 1st is first billed on the next 1st, and nothing is refunded for a hotel removed mid-month.\nquota: quota.properties says how many hotels you may have live (allowed), how many you have (used) and how many you may still add (free). quota.next says the next level and about what paying ahead opens it today; paying ahead is done in the partner portal. Past the quota, POST /properties answers 409 BILLING_SETUP_REQUIRED with details.reason QUOTA_FULL.\nunpaid: unpaidInvoiceDays gives the rule (due by the end of dueDay, booking-site connections paused on pauseDay, the hotels' service ended endAfterDays later) and, for each unpaid monthly invoice, its own instants: dueAt, pauseAt, endAt. applies false means the rule is not in force for you yet (quota.startsOn says from when).\natCost: A hotel includes a number of room types and rate plans; past them the channel manager charges for each one. Our limits sit under what is included, so nothing is charged unless ZimmerStack raises a hotel's limit. When it does, what the hotel holds above the included number is recorded against you at the channel manager's own price, nothing added, and listed under atCost with its month, its hotel and whether it is on an invoice yet.\natCostInvoicing: atCost.invoicing says how a recorded line reaches an invoice today, and atCost.rule says it in a sentence. BY_ZIMMERSTACK: our team adds it to one of your invoices. AUTOMATIC: your next monthly invoice carries it by itself, one line for each, converted from US dollars to your invoice's currency at the same exchange rate as your price list that day, with the rate and its date printed on the line. Each line's standing says where it is for you (ON_INVOICE with its invoiceNumber, ON_NEXT_INVOICE, ADDED_BY_ZIMMERSTACK or NOT_CHARGED); GET /billing/next-invoice lists the lines that are on no invoice yet under its own atCost.\nmoney: Amounts are major units as decimal strings beside …Minor in hundredths, in the invoice's currency (x-zimmerstack.moneyByCurrency). The quota's pay-ahead figure, the onboarding fee and the at-cost lines are in US dollars.\n\n",
@@ -6151,8 +7396,8 @@ export const REFERENCE: { api: string; base: string; operations: ReferenceOperat
   "channels-and-modifiers": "## channels\nwhat: GET /channels lists the connections the channel manager holds for the property, from our record (the nightly settings sweep), with every unresolved problem the channel manager reported (rate_error, sync_error, disconnect_channel, the inventory pipe out of sync).\nfreshness: asOf says when the list was captured; a channel connected today appears after the next sweep. Problems are live.\npushed: The same problems are pushed as webhooks: channel.sync.alert when one is raised (channelKind names the channel; a change to a channel's money settings is one too, event settings_changed) and channel.sync.recovered when it ends: the channel reconnected, a re-check found it working, the hotel marked it as handled, or the inventory pipe recovered. recovered carries the alert's own event, channelId and raisedAt, so the two pair up (docs/webhooks).\n\n## modifiers\nwhat: One price per rate plan per night goes to every channel the plan is mapped to. A channel's modifier is the one thing that differs per channel: up to five ordered steps (raise or lower, by a percentage or a fixed amount in major units) the channel manager applies to every price it sends that channel. GET /channels shows each channel's steps; PUT /channels/{channelId}/modifier replaces them (scope channel-modifiers:write: one call moves every price on that channel. A software partner's keys hold it by default; a hotel's own key holds it when the owner ticked it).\ntakesEffect: Saving a modifier makes the channel manager send that channel every date again, so prices already on the channel move to the new rule within minutes.\nresend: Not needed after a modifier: the channel manager re-sends that channel every date itself. POST /rates/resend (scope ari:write) is for the rare case where the channel should get our record's prices and stay rules again, unchanged; re-sending the same price through PUT /rates does nothing, because a value our record already holds is dropped before anything is sent. A hotel may ask for it only a few times a day (data.scope rate-resends-day).\nworkflow:\n  - GET /channels: find the channel (channelId, kind) and read the steps it holds\n  - PUT /channels/{channelId}/modifier with the whole list of steps; [] removes the modifier\n  - Nothing else: the channel manager sends that channel every date again, so prices already there move within minutes\nband:\n  maxDecreasePct: 50\n  maxIncreasePct: 100\nbandRule: The steps together may not lower a price by more or raise it by more than the band: 422 MODIFIER_OUT_OF_BAND, nothing changed. A fixed amount is judged at the property's lowest and highest standing price.\nshared: A connection that serves more than one property (one Airbnb or Booking.com account for sister hotels) is refused, 409 CHANNEL_SHARED: its modifier would move another hotel's prices. The hotels' owner sets it in ZimmerStack.\ngrid: GET /rates always answers the price before any modifier. What a channel is sent is that price with the channel's steps applied in order.\nmarkupPlan: markupPlan on GET /channels is a separate adjustment the owner may have set in the ZimmerStack Channels app; it applies before the modifier and is read-only here.\nsandbox: A sandbox has three pretend channels (Booking.com, MakeMyTrip, Agoda) so the whole workflow can be tried with a test key; nothing leaves our record.\n\n",
   "sandbox": "## sandbox\nwhat: The owner creates a sandbox from a real property (admin → Developers → API keys, Channels → Integrations): a copy of its room types and rate plans that no channel ever sees. Keys minted there start with zsk_test_ and work ONLY there; a live key never reaches it.\npushes: Every route behaves as in production. A push lands in our record and stops: GET /sync reports IN_SYNC and GET /batches/{batchId} reports landed within a minute, through the same code path as a live property. GET /property says sandbox: true.\nmodify: POST /sandbox/bookings/{bookingId}/modify sends a modified revision — new dates, length, rooms or guest — and the REAL channel.booking.modified webhook with changes and previous, the old nights back on availability and the new ones off.\nbookings: POST /sandbox/bookings simulates an OTA booking end to end — the booking, the sandbox's availability moved down, the inventory event, and the REAL channel.booking.created webhook to every endpoint registered on the sandbox. POST /sandbox/bookings/{bookingId}/cancel does the same for a cancellation. With otaName \"Website\" the booking is one made on the hotel's own website instead, and the events are direct.booking.created and direct.booking.cancelled (x-zimmerstack.directBookings). A live key gets 403 SANDBOX_ONLY.\neveryType: A real event of every type can be made on a sandbox. channel.booking.created, .modified, .cancelled and direct.booking.created, .cancelled: the three booking routes above. direct.booking.modified: POST /sandbox/bookings/{bookingId}/no-show on a Website booking marks the guest a no-show (stayStatus NOSHOW, the nights back on sale), and { undo: true } takes it back. channel.sync.alert and channel.sync.recovered: POST /sandbox/sync-events with type, and event for which problem (rate_error, sync_error, disconnect_channel, settings_changed, inventory_out_of_sync); the problem is on one of the sandbox's pretend channels and GET /channels lists it until recovered clears it. A cancellation that arrives with no booking before it: POST /sandbox/bookings with arrivesCancelled: true sends channel.booking.cancelled alone. Each has a sequence and is in GET /events, which a Test button's sample is not.\nlimits: The same budgets as production (one sandbox per owner, up to five per software partner, at most five keys on each). Nothing you do there is billed or pushed to a channel.\ngoLive: Ask the owner for a zsk_live_ key on the real property, swap the key, keep the code.\n\n",
   "dry-run-notices-explain": "## explain\nwhat: Before your software writes, it can see what the write will do; after it writes, the answer says what the write did NOT do; and any night's whole story is one call. A 202 only ever said the values were in our record. These say whether they do what you meant.\ndryRun:\n  how: Add dryRun: true to the body of PUT /availability, PUT /rates or PUT /restrictions. The request is validated, coalesced and judged exactly as a real one, and stops before the first write. It answers 200 with a preview instead of 202.\n  answers: verdict (would-write, nothing-to-write or would-refuse, with the refusal a real request would get now), the ranges that would change with the value sent, the ranges already held by our record and the channel manager, the ranges held after a refusal with the channel manager's words, what our record would refuse, prices that would be rounded, and the same notices the real write carries.\n  costs: Charged like the write it previews against the budgets of a minute: one request and one write on the key and the property, and the same cells on the property's cells budget (x-zimmerstack.limitsTable). Never counted against the hour and day budgets of changed cells: it changes none. So a dry run is not a free read of the calendar; GET /availability, /rates and /restrictions are the reads.\n  storesNothing: No batch, no queue entry, no idempotency key: send the same body without dryRun, under the same key if you like, to do it. Our record can move between the two; the real answer is the truth.\n  limits: Each list of a preview holds at most 50 ranges; the field beside it (wouldChangeOmitted, unchangedOmitted, heldOmitted) says how many were left out. wouldReject foretells the refusals our record can know without writing: a real write can still refuse a group for a reason only the write meets.\n  alsoOn: POST /availability/close and POST /availability/reopen take dryRun too.\nnotices:\n  what: Every answer of an ARI write, and every preview, may carry notices: one plain sentence each, with a stable code, what it is about (room type, rate plans, nights, channels) and what to do. Warnings first; at most 20, with noticesOmitted for the rest. Absent when there is nothing to say.\n  levels: warning: our record shows what you sent does not do the whole job (something still sells, nothing is sent, a rule of the hotel will undo it). info: how it works, said so the next surprise is not one.\n  rule: Branch on code, show message and action to a person. A code you do not know is one added later: show it. Codes are never renamed and never change meaning.\n  zeroAndStopSell: Two different things. Availability 0 is a COUNT of the room type: it closes the room on every rate plan and every channel, the rates an OTA links on its own side included, and it moves: an OTA cancellation puts a room back, your next count replaces it. A stop-sell is a SWITCH on ONE rate plan: it holds whatever the count does, and it stops that plan only, so the room keeps selling through its other plans and through any rate an OTA derives on its side. To close a room and keep it closed, do both: POST /availability/close.\n  codes:\n    - code: NOT_SOURCE_OF_TRUTH · level: warning · on: every write · means: The hotel is not live for this software yet: prices and stay rules sent now are stored and wait for go-live, and of room counts only one that lowers what is on sale goes out.\n    - code: ROOM_TYPE_NOT_LINKED · level: warning · on: availability · means: The room type has no link to the channel manager: its count is kept and sent nowhere.\n    - code: PLAN_NOT_LINKED · level: warning · on: rates, restrictions · means: The rate plan has no link to the channel manager: its values are kept and sent nowhere.\n    - code: PLAN_NOT_MAPPED · level: warning · on: rates, restrictions · means: The rate plan is on the channel manager and no connected channel that is switched on sells it: nothing sells or stops because of this write.\n    - code: ROOM_STILL_ON_SALE · level: warning · on: restrictions · means: You stop-sold one rate plan; the room is still on sale through its other plans (otherRatePlanIds).\n    - code: OTA_LINKED_RATES_NOT_REACHED · level: info · on: restrictions · means: A stop-sell does not reach a rate an OTA links on its own side: only the room's count closes it.\n    - code: STAY_RULES_FROM_ANOTHER_PLAN · level: warning · on: restrictions · means: On a channel, the OTA rate this plan sells takes its stay rules from another plan's row (otherRatePlanIds): a stay rule here alone does not reach it.\n    - code: PER_OTA_PLANS_FOLLOW · level: info · on: rates, restrictions · means: The plan has per-OTA plans: its price is copied onto them and they follow its stay rules.\n    - code: PER_OTA_PLAN_FOLLOWS_PARENT · level: warning · on: rates, restrictions · means: The plan you wrote is a per-OTA plan: its parent's price and stay rules replace what is set here.\n    - code: VALUE_HELD · level: warning · on: rates, restrictions · means: The value equals one the channel manager refused: it is held with its words, not sent again.\n    - code: COUNT_WAS_REFUSED · level: warning · on: availability · means: The last count sent for these nights was refused by the channel manager and nothing has landed since.\n    - code: COUNT_ZERO_IS_NOT_STOP_SELL · level: info · on: availability · means: You sent availability 0: a count that closes every plan and channel, and that the next OTA cancellation or your next count moves. Not a switch.\n    - code: STOP_SELL_IS_NOT_A_COUNT · level: info · on: restrictions · means: You sent a stop-sell: a switch on those plans. The room's count is untouched.\n    - code: COUNT_OPEN_BUT_PLANS_STOPPED · level: warning · on: availability · means: You sent a count above 0 for nights on which every plan of the room is stop-sold: the room does not sell.\n    - code: NEW_DATES_OPEN_CLOSED · level: warning · on: availability · means: The hotel's rule \"new dates open closed\" will set these nights to 0 when they come on sale.\n    - code: FAR_NIGHTS_NEED_A_COUNT · level: warning · on: rates, restrictions · means: A night past day 365 with no count of its own goes out closed, whatever its price or stay rules.\n    - code: ENGINE_WILL_REPRICE · level: warning · on: rates · means: The hotel's pricing engine is set to win: it replaces a price sent here at its next hourly update.\n    - code: ENGINE_WILL_RECOUNT · level: warning · on: availability · means: The hotel publishes the count its bookings work out: a count above 0 sent here is replaced. A 0 holds.\n    - code: DRIFT_REPAIR_OFF · level: info · on: rates, restrictions · means: The hotel switched the nightly repair off: a value changed on the channel manager's side is reported, not sent again.\nclose:\n  what: POST /availability/close closes one room type on a range of nights everywhere, in one call: it sets the room type's count to 0 and switches stop-sell on for every one of its rate plans (their per-OTA plans take it from them on the channel manager). You do not need to know the hotel's plans. Scope ari:write.\n  answer: What was closed (count.changedNights, and each rate plan with its nights), what was already closed, and notReached: every plan that is not linked or that no channel sells, and the one thing no stop-sell reaches, a rate an OTA links on its own side, which only the count closes.\n  reopen: POST /availability/reopen undoes exactly that close and nothing else: it lifts the stop-sell on the plans the close switched on (a plan that was already stop-sold before stays stopped) and puts back the count each night held before. Name available to set a count yourself instead: only your software knows how many rooms are free now. A night whose count was changed after the close is left as it is, and a night the close had not closed is skipped (skippedNights).\n  writes: Both are ordinary writes underneath: 202 with a batch for the count and one for the stay rules to watch with GET /batches/{batchId}; 200 when nothing had to change, and on a dry run. Charged the room type's count and each of its plans for every night against the cells budget.\n  shield: A close only closes inventory, so it is accepted while the integration is paused or out of budget, on the safety lane (lane: true). A reopen opens inventory and waits like any other open (429 RATE_LIMITED, data.scope shield-pause).\nnight:\n  what: GET /explain?roomTypeId=&date=, optionally &ratePlanId=: one night's whole story from our record. Scope ari:read. No call is made to the channel manager, so it can be asked at any time.\n  answers: For the room type's count and for each rate plan's price and stay rules: what your software last sent and when (with its batch id), what our record holds and who set it, what the channel manager was last seen holding and when; every send of the count we still hold and how it ended, a refused value in the channel manager's own words; the plan's per-OTA plans; every connection and whether it sells the plan; the rules in force that night; the bookings that hold or held a room (ids and times, never a guest); and summary, the same in plain sentences.\n  honest: Where we do not know, the answer says so: seenAt null means the night was never read back from the channel manager; lastSent null means the write is older than the ones we kept the values of (searched says how far we looked); channels.known false means the hotel's connections have not been read yet.\n  notOtas: We hold the channel manager's copy, not each OTA's: what an OTA shows is what the channel manager passed to it.\nnotMapped: A rate plan can be on the channel manager and sold by no connected channel. What each connection maps is read from the channel manager every night and kept (channels.seenAt on GET /explain). Such a plan is named three ways: the notice PLAN_NOT_MAPPED on a write, unreachable[] with status not-mapped on its batch (which still lands: the values are sent), and reach on GET /explain.\nsandboxFaults:\n  what: On a sandbox the pretend channel takes everything. POST /sandbox/faults makes it misbehave, so you can watch your software handle what a live hotel meets on a bad day. Test keys only (403 SANDBOX_ONLY). Prices and stay rules only: room counts land as before.\n  kinds:\n    refuse: The next values (rate plan × night) are refused as the channel manager refuses: the nights are held with its words, the batch reads failed with parkedCells, GET /sync counts them, your webhook receives channel.sync.alert (value_refused), and the same value sent again is answered as held.\n    throttle: For minutes, every push is answered \"too many requests\": batches wait (pending, then failed from the fifth attempt in a row, as on a live hotel), nothing is lost, no alert is sent, and it lands by itself afterwards.\n    outage: For minutes, every push fails. After five failed attempts, one a minute on a sandbox, your webhook receives channel.sync.alert (rates_out_of_sync) and the batch reads failed; when the outage ends the next attempt lands and channel.sync.recovered follows.\n  answer: The fault in force and watch: what to do next and what your software should then see, step by step. GET /sandbox/faults reads it; DELETE /sandbox/faults ends it. One fault at a time; a new one replaces it.\n\n",
-  "errors": "Every refusal is { statuscode, message, data: { code, … } }. Branch on data.code (the client: err.code): it is stable. message is for a person and may change.\nRetry only 429, 5xx and IDEMPOTENCY_IN_FLIGHT, after Retry-After; every other code is a verdict on the request. A 429 is always safe to send again; a 5xx only for a read or a write that carries an idempotency key. The client does this by itself.\n\n- API_KEY_INVALID (401): \"Unauthorized\"\n- API_KEY_REVOKED (401): \"Unauthorized\"\n- API_KEY_EXPIRED (401): \"Unauthorized\" [POST /properties, DELETE /properties/{propertyId}]\n- CONNECT_API_NOT_CONFIGURED\n- IP_NOT_ALLOWED (403): \"This API key may not be used from this address. The property owner restricts it to an allowlist.\"\n- SCOPE_MISSING (403): \"This API key does not have the bookings:write scope. The property owner grants scopes when creating or editing a key.\"\n- PROPERTY_UNAVAILABLE (409): \"This property is not available to the API any more. Contact the property owner.\"\n- CHANNEL_MANAGER_DISABLED (409): \"This property's channel manager is switched off, so writes would not reach any channel. Contact the property owner.\"\n- PMS_NOT_AVAILABLE (409): \"This property runs the channel manager only; there is no PMS to put a booking in.\"\n- VALIDATION (400): \"updates[0].available: Expected number, received string\"\n- RANGE_INVALID (400)\n- HORIZON (400): \"updates[0]: 2028-06-01 is beyond the horizon (last writable night is 2028-02-24, today + 500 days)\" [PUT /availability, PUT /rates, PUT /restrictions, POST /availability/close, POST /availability/reopen]\n- TOO_MANY_UPDATES (400) [PUT /availability, PUT /rates, PUT /restrictions]\n- TOO_MANY_CELLS (400): \"a request may name at most 5000 cells (entity × night); split the calendar into several requests\" [PUT /availability, PUT /rates, PUT /restrictions, POST /availability/close, POST /availability/reopen]\n- UNKNOWN_ROOM_TYPE (400)\n- UNKNOWN_RATE_PLAN (400): \"rate plan(s) 77 do not belong to this property (see GET /catalog)\" [PUT /rates, PUT /restrictions, GET /explain, POST /bookings]\n- CURRENCY_MISMATCH (400): \"rates must be sent in INR (got EUR)\" [PUT /rates, POST /bookings]\n- RATE_LIMITED (429): \"Too many requests on this API key. Slow down and retry after the Retry-After interval.\"\n- NOTHING_ACCEPTED (422): \"exceptions are switched off for this property — move the base rate instead\" [PUT /availability, PUT /rates, PUT /restrictions]\n- BATCH_NOT_FOUND (404): \"Batch not found.\"\n- IDEMPOTENCY_KEY_INVALID (400) [POST /properties]\n- IDEMPOTENCY_KEY_REUSED (409): \"This idempotency key was already used with a different request body.\" [POST /properties]\n- IDEMPOTENCY_IN_FLIGHT (409) [POST /properties]\n- STAY_INVALID (400): \"checkIn 2026-10-01 is in the past (today at the property is 2026-10-20)\" [POST /bookings, POST /sandbox/bookings, POST /sandbox/bookings/{bookingId}/modify]\n- UNKNOWN_ROOM_TYPE_FOR_PLAN (400) [POST /bookings]\n- OCCUPANCY_EXCEEDED (400): \"rooms[0]: Deluxe takes at most 3 adults (got 4)\" [POST /bookings]\n- NO_AVAILABILITY (409): \"room type 412 has 0 left on 2026-12-21; 1 requested\" [POST /bookings]\n- EXTERNAL_REFERENCE_REUSED (409) [POST /bookings]\n- PAYMENT_NOT_ALLOWED (403): \"This API key may not record payments. The property owner grants the bookings:payments scope.\" [POST /bookings]\n- PAYMENT_EXCEEDS_TOTAL (400): \"payment.amount 30000.00 exceeds the stay total 27000.00\" [POST /bookings]\n- TAXES_NOT_CONFIGURED (409): \"This property has no confirmed tax lines, so a rate before taxes cannot be completed. Send nightlyRate as the guest pays it (leave nightlyRateIncludesTaxes out), or ask the hotel to confirm its taxes in admin, Policies, Taxes. Either way send the booking again with a new x-idempotency-key.\" [POST /bookings]\n- TAXES_INSIDE_RATES (409): \"This property's taxes are inside its prices, so there is nothing to add to a rate before taxes. Send nightlyRate as the guest pays it (leave nightlyRateIncludesTaxes out), with a new x-idempotency-key.\" [POST /bookings]\n- BOOKING_NOT_FOUND (404): \"Booking not found.\"\n- BOOKING_NOT_CANCELLABLE (409): \"Booking already checked in. Ask the hotel to handle it at the desk.\"\n- MODULE_NOT_ENTITLED (402): \"This property's plan does not include the PMS.\"\n- SANDBOX_ONLY (403): \"The sandbox routes answer only to a test key (zsk_test_…) on a sandbox property. This key is a live key.\" [POST /sandbox/bookings, POST /sandbox/bookings/{bookingId}/cancel, POST /sandbox/bookings/{bookingId}/modify]\n- ROOM_TYPE_NOT_FOUND (404): \"That room type doesn't exist.\"\n- RATE_PLAN_NOT_FOUND (404): \"That rate plan doesn't exist.\"\n- CATALOG_CONFLICT (409): \"A room type with this name already exists.\" [PUT /catalog/room-types, PUT /catalog/rate-plans]\n- CATALOG_BUSY (409): \"Another room-type or rate-plan write for this property is still running. Retry in a few seconds.\"\n- CHANNEL_MANAGER_ERROR (502): \"The channel manager refused the delete. Nothing changed here; try again in a moment.\"\n- WEBHOOK_ENDPOINT_NOT_FOUND\n- WEBHOOK_DELIVERY_NOT_FOUND\n- WEBHOOK_ENDPOINT_LIMIT\n- WEBHOOK_ENDPOINT_NOT_ACTIVE\n- WEBHOOK_ENDPOINT_SUSPENDED\n- WEBHOOK_PAYLOAD_EXPIRED\n- WEBHOOK_ACCESS_ENDED\n- WEBHOOKS_UNAVAILABLE\n- PROPERTY_REQUIRED (400): \"This is a company key: name the hotel in the X-ZS-Property header, with its id from GET /properties.\"\n- PROPERTY_NOT_FOUND (404): \"No property with this id that this key may act on (see GET /properties).\"\n- ARI_NOT_AUTHORITATIVE (409): \"This property's local rates and availability are not the channels' source of truth yet, so API writes would never be pushed. Contact ZimmerStack support.\"\n- ROUTE_NOT_FOUND (404): \"No GET /api/v1/connect-api/v1/nope in the Connect API; the contract lists every route.\"\n- PAYLOAD_TOO_LARGE (413): \"The request body is larger than the API accepts. Split the updates array across requests.\"\n- AUTH_BACKEND_UNAVAILABLE\n- BOOKING_NOT_MODIFIABLE (409): \"A cancelled booking cannot be modified from the sandbox.\"\n- SANDBOX_NOT_FOUND\n- SANDBOX_INCOMPLETE\n- WRITES_FROZEN (503): \"ZimmerStack has paused every write to the channel manager for now. Nothing was written. Retry after the Retry-After interval; reads and bookings are not affected.\"\n- WRITES_SUSPENDED (403): \"ZimmerStack has suspended writes for this integration: it kept sending after repeated notices. Reads and bookings still work. Contact ZimmerStack support to have it released.\"\n- SHIELD_UNAVAILABLE (503): \"The write could not be checked against this property's budgets right now. Nothing was written. Retry after the Retry-After interval.\"\n- CATALOG_LIMIT_REACHED (409): \"This property holds 298 rate plans and may hold 300; this request would add 6. Delete what is unused, or ask ZimmerStack support to raise the limit.\" [PUT /catalog/room-types, PUT /catalog/rate-plans]\n- TOO_MANY_NEW_ENTITIES (400): \"This request would create 34 new room types or rate plans; one request may create at most 20. Entities that already exist do not count. Split the new ones across requests.\" [PUT /catalog/room-types, PUT /catalog/rate-plans]\n- RATE_OUT_OF_BAND (422): \"rate plan 901 on 2026-12-01: 45 INR is below the band around this plan's standing price 4500 INR (lowest accepted 450) (and 29 more cells). Rates are sent in major units (4500, not 450000). If the price is meant, change the plan's standing price first (PUT /catalog/rate-plans defaultRate), or ask ZimmerStack support to lift the band for this property.\" [PUT /availability, PUT /rates, PUT /restrictions]\n- CHANNEL_NOT_FOUND (404): \"No connected channel with this id on this property. GET /channels lists them.\" [PUT /channels/{channelId}/modifier]\n- CHANNEL_SHARED (409): \"This connection serves more than one property, so its modifier would move another hotel's prices too. It is set by the hotels' owner in ZimmerStack, not through this API. Nothing was changed.\" [PUT /channels/{channelId}/modifier]\n- MODIFIER_OUT_OF_BAND (422): \"These steps would change what the channel is sent by +180%; a channel's modifier must stay between 50% lower and 100% higher. Nothing was changed.\"\n- COMPANY_KEY_REQUIRED (403): \"Hotels are added and removed with your company key. This key belongs to one hotel.\"\n- BILLING_SETUP_REQUIRED (409): \"Accept the price list and add your billing details on the Billing page of the partner portal first. Then send the request again under a new idempotency key.\" [POST /properties]\n- OWNER_HAS_ACCOUNT (409): \"This owner already has an account you did not create. Ask them to enter your vendor code under Integrations.\" [POST /properties]\n- SANDBOX_LIMIT (409): \"You hold 5 sandboxes, the most one company may have. Remove one first. Then send the request again under a new idempotency key.\" [POST /properties]\n- CONFIRMATION_MISMATCH (400): \"Send confirm= with the hotel's exact name, as GET /properties prints it.\"\n- PROPERTY_NOT_REMOVABLE (409): \"You did not add this hotel: its owner let you in. Ask the owner to remove your access under Integrations.\"\n- PROPERTY_BUSY (503): \"This hotel, or another of yours, is still being added or removed. Retry shortly.\" [POST /properties, DELETE /properties/{propertyId}]\n- PRICE_UNAVAILABLE (503): \"This hotel cannot be priced right now. Retry in a few minutes.\" [POST /properties]\n- CONNECT_LINK_NOT_FOUND (404): \"Connect link not found.\" [GET /connect-links/{linkId}, POST /connect-links/{linkId}/revoke]\n- CONNECT_LINKS_UNAVAILABLE\n- CHANNEL_NOT_AVAILABLE (409): \"MakeMyTrip · Goibibo is available to hotels in India.\" [POST /connect-links]\n- LIVE_KEY_REQUIRED (409): \"A connect link connects a real booking site, so it is made with a live key. To see what a link tells you when it ends, send yourself a test event (POST /webhook-endpoints/{endpointId}/test with eventType channel.connect.completed).\" [POST /connect-links]\n- NOT_READY (409): \"This hotel is not ready to go live: Your software has not sent the next 365 nights yet.\" [POST /go-live]\n- KEY_NOT_FOUND (404): \"No such key among the ones you created on this property.\" [POST /properties/{propertyId}/keys/{keyId}/rotate, POST /properties/{propertyId}/keys/{keyId}/revoke]\n- KEY_LIMIT (409): \"A property may hold at most 5 active API keys. Revoke one first.\" [POST /properties/{propertyId}/keys]\n- KEY_REVOKED (401)\n- KEY_ALREADY_ROTATING (409) [POST /properties/{propertyId}/keys/{keyId}/rotate]\n- SCOPES_INVALID (400) [POST /properties/{propertyId}/keys]\n- ALLOWED_CIDRS_INVALID (400) [POST /properties/{propertyId}/keys]\n- REASON_REQUIRED (400) [POST /properties/{propertyId}/keys/{keyId}/revoke]\n- SUPPORT_TICKET_NOT_FOUND (404): \"Support ticket not found.\"\n- SUPPORT_TICKET_CLOSED (409): \"This ticket is closed. Open a new one and name this ticket in it.\"\n",
+  "errors": "Every refusal is { statuscode, message, data: { code, … } }. Branch on data.code (the client: err.code): it is stable. message is for a person and may change.\nRetry only 429, 5xx and IDEMPOTENCY_IN_FLIGHT, after Retry-After; every other code is a verdict on the request. A 429 is always safe to send again; a 5xx only for a read or a write that carries an idempotency key. The client does this by itself.\n\n- API_KEY_INVALID (401): \"Unauthorized\"\n- API_KEY_REVOKED (401): \"Unauthorized\"\n- API_KEY_EXPIRED (401): \"Unauthorized\" [POST /properties, PATCH /properties/{propertyId}, DELETE /properties/{propertyId}]\n- CONNECT_API_NOT_CONFIGURED\n- IP_NOT_ALLOWED (403): \"This API key may not be used from this address. The property owner restricts it to an allowlist.\"\n- SCOPE_MISSING (403): \"This API key does not have the bookings:write scope. The property owner grants scopes when creating or editing a key.\"\n- PROPERTY_UNAVAILABLE (409): \"This property is not available to the API any more. Contact the property owner.\"\n- CHANNEL_MANAGER_DISABLED (409): \"This hotel is not on the channel manager yet. Send its room types and rate plans (PUT /catalog/room-types, then PUT /catalog/rate-plans), or press Finish setup in the Channels app. Either puts it there.\"\n- PMS_NOT_AVAILABLE (409): \"This property runs the channel manager only; there is no PMS to put a booking in.\"\n- VALIDATION (400): \"updates[0].available: Expected number, received string\"\n- RANGE_INVALID (400)\n- HORIZON (400): \"updates[0]: 2028-06-01 is beyond the horizon (last writable night is 2028-02-24, today + 500 days)\" [PUT /availability, PUT /rates, PUT /restrictions, POST /availability/close, POST /availability/reopen]\n- TOO_MANY_UPDATES (400) [PUT /availability, PUT /rates, PUT /restrictions]\n- TOO_MANY_CELLS (400): \"a request may name at most 5000 cells (entity × night); split the calendar into several requests\" [PUT /availability, PUT /rates, PUT /restrictions, POST /availability/close, POST /availability/reopen]\n- UNKNOWN_ROOM_TYPE (400)\n- UNKNOWN_RATE_PLAN (400): \"rate plan(s) 77 do not belong to this property (see GET /catalog)\" [PUT /rates, PUT /restrictions, GET /explain, POST /bookings]\n- CURRENCY_MISMATCH (400): \"rates must be sent in INR (got EUR)\" [PUT /rates, POST /bookings]\n- RATE_LIMITED (429): \"Too many requests on this API key. Slow down and retry after the Retry-After interval.\"\n- NOTHING_ACCEPTED (422): \"exceptions are switched off for this property — move the base rate instead\" [PUT /availability, PUT /rates, PUT /restrictions]\n- BATCH_NOT_FOUND (404): \"Batch not found.\"\n- IDEMPOTENCY_KEY_INVALID (400) [POST /properties]\n- IDEMPOTENCY_KEY_REUSED (409): \"This idempotency key was already used with a different request body.\" [POST /properties, PATCH /properties/{propertyId}]\n- IDEMPOTENCY_IN_FLIGHT (409) [POST /properties, PATCH /properties/{propertyId}]\n- STAY_INVALID (400): \"checkIn 2026-10-01 is in the past (today at the property is 2026-10-20)\" [POST /bookings, POST /sandbox/bookings, POST /sandbox/bookings/{bookingId}/modify]\n- UNKNOWN_ROOM_TYPE_FOR_PLAN (400) [POST /bookings]\n- OCCUPANCY_EXCEEDED (400): \"rooms[0]: Deluxe takes at most 3 adults (got 4)\" [POST /bookings]\n- NO_AVAILABILITY (409): \"room type 412 has 0 left on 2026-12-21; 1 requested\" [POST /bookings]\n- EXTERNAL_REFERENCE_REUSED (409) [POST /bookings]\n- PAYMENT_NOT_ALLOWED (403): \"This API key may not record payments. The property owner grants the bookings:payments scope.\" [POST /bookings]\n- PAYMENT_EXCEEDS_TOTAL (400): \"payment.amount 30000.00 exceeds the stay total 27000.00\" [POST /bookings]\n- TAXES_NOT_CONFIGURED (409): \"This property has no confirmed tax lines, so a rate before taxes cannot be completed. Send nightlyRate as the guest pays it (leave nightlyRateIncludesTaxes out), or ask the hotel to confirm its taxes in admin, Policies, Taxes. Either way send the booking again with a new x-idempotency-key.\" [POST /bookings]\n- TAXES_INSIDE_RATES (409): \"This property's taxes are inside its prices, so there is nothing to add to a rate before taxes. Send nightlyRate as the guest pays it (leave nightlyRateIncludesTaxes out), with a new x-idempotency-key.\" [POST /bookings]\n- BOOKING_NOT_FOUND (404): \"Booking not found.\"\n- BOOKING_NOT_CANCELLABLE (409): \"Booking already checked in. Ask the hotel to handle it at the desk.\"\n- MODULE_NOT_ENTITLED (402): \"This property's plan does not include the PMS.\"\n- SANDBOX_ONLY (403): \"The sandbox routes answer only to a test key (zsk_test_…) on a sandbox property. This key is a live key.\" [POST /sandbox/bookings, POST /sandbox/bookings/{bookingId}/cancel, POST /sandbox/bookings/{bookingId}/modify]\n- ROOM_TYPE_NOT_FOUND (404): \"That room type doesn't exist.\"\n- RATE_PLAN_NOT_FOUND (404): \"That rate plan doesn't exist.\"\n- CATALOG_CONFLICT (409): \"A room type with this name already exists.\" [PUT /catalog/room-types, PUT /catalog/rate-plans]\n- CATALOG_BUSY (409): \"Another room-type or rate-plan write for this property is still running. Retry in a few seconds.\"\n- CHANNEL_MANAGER_ERROR (502): \"The channel manager refused the delete. Nothing changed here; try again in a moment.\"\n- WEBHOOK_ENDPOINT_NOT_FOUND\n- WEBHOOK_DELIVERY_NOT_FOUND\n- WEBHOOK_ENDPOINT_LIMIT\n- WEBHOOK_ENDPOINT_NOT_ACTIVE\n- WEBHOOK_ENDPOINT_SUSPENDED\n- WEBHOOK_PAYLOAD_EXPIRED\n- WEBHOOK_ACCESS_ENDED\n- WEBHOOKS_UNAVAILABLE\n- PROPERTY_REQUIRED (400): \"This is a company key, so each request names its hotel in the X-ZS-Property header, with the hotel's id. GET /properties lists your hotels.\"\n- PROPERTY_NOT_FOUND (404): \"No property with this id that this key may act on (see GET /properties).\"\n- ARI_NOT_AUTHORITATIVE (409): \"This property's local rates and availability are not the channels' source of truth yet, so API writes would never be pushed. Contact ZimmerStack support.\"\n- ROUTE_NOT_FOUND (404): \"No GET /api/v1/connect-api/v1/nope in the Connect API; the contract lists every route.\"\n- PAYLOAD_TOO_LARGE (413): \"The request body is larger than the API accepts. Split the updates array across requests.\"\n- AUTH_BACKEND_UNAVAILABLE\n- BOOKING_NOT_MODIFIABLE (409): \"A cancelled booking cannot be modified from the sandbox.\"\n- SANDBOX_NOT_FOUND\n- SANDBOX_INCOMPLETE\n- WRITES_FROZEN (503): \"ZimmerStack has paused every write to the channel manager for now. Nothing was written. Retry after the Retry-After interval; reads and bookings are not affected.\"\n- WRITES_SUSPENDED (403): \"ZimmerStack has suspended writes for this integration: it kept sending after repeated notices. Reads and bookings still work. Contact ZimmerStack support to have it released.\"\n- SHIELD_UNAVAILABLE (503): \"The write could not be checked against this property's budgets right now. Nothing was written. Retry after the Retry-After interval.\"\n- CATALOG_LIMIT_REACHED (409): \"This property holds 298 rate plans and may hold 300; this request would add 6. Delete what is unused, or ask ZimmerStack support to raise the limit.\" [PUT /catalog/room-types, PUT /catalog/rate-plans]\n- TOO_MANY_NEW_ENTITIES (400): \"This request would create 34 new room types or rate plans; one request may create at most 20. Entities that already exist do not count. Split the new ones across requests.\" [PUT /catalog/room-types, PUT /catalog/rate-plans]\n- RATE_OUT_OF_BAND (422): \"rate plan 901 on 2026-12-01: 45 INR is below the band around this plan's standing price 4500 INR (lowest accepted 450) (and 29 more cells). Rates are sent in major units (4500, not 450000). If the price is meant, change the plan's standing price first (PUT /catalog/rate-plans defaultRate), or ask ZimmerStack support to lift the band for this property.\" [PUT /availability, PUT /rates, PUT /restrictions]\n- CHANNEL_NOT_FOUND (404): \"No connected channel with this id on this property. GET /channels lists them.\" [PUT /channels/{channelId}/modifier]\n- CHANNEL_SHARED (409): \"This connection serves more than one property, so its modifier would move another hotel's prices too. It is set by the hotels' owner in ZimmerStack, not through this API. Nothing was changed.\" [PUT /channels/{channelId}/modifier]\n- MODIFIER_OUT_OF_BAND (422): \"These steps would change what the channel is sent by +180%; a channel's modifier must stay between 50% lower and 100% higher. Nothing was changed.\"\n- COMPANY_KEY_REQUIRED (403): \"Hotels are added and removed with your company key. This key belongs to one hotel.\"\n- BILLING_SETUP_REQUIRED (409): \"Accept the price list and add your billing details on the Billing page of the partner portal first. Then send the request again under a new idempotency key.\" [POST /properties]\n- OWNER_HAS_ACCOUNT (409): \"This owner already has an account you did not create. Ask them to enter your vendor code under Integrations.\" [POST /properties]\n- SANDBOX_LIMIT (409): \"You hold 5 sandboxes, the most one company may have. Remove one first. Then send the request again under a new idempotency key.\" [POST /properties]\n- CONFIRMATION_MISMATCH (400): \"Send confirm= with the hotel's exact name, as GET /properties prints it.\"\n- PROPERTY_NOT_REMOVABLE (409): \"You did not add this hotel: its owner let you in. Ask the owner to remove your access under Integrations.\"\n- PROPERTY_NOT_CHANGEABLE (409): \"You did not add this hotel: its owner let you in. Its name and address are the owner's to change.\" [PATCH /properties/{propertyId}]\n- PROPERTY_BUSY (503): \"This hotel, or another of yours, is still being added or removed. Retry shortly.\" [POST /properties, DELETE /properties/{propertyId}]\n- PRICE_UNAVAILABLE (503): \"This hotel cannot be priced right now. Retry in a few minutes.\" [POST /properties]\n- CONNECT_LINK_NOT_FOUND (404): \"Connect link not found.\" [GET /connect-links/{linkId}, POST /connect-links/{linkId}/revoke]\n- CONNECT_LINKS_UNAVAILABLE\n- CHANNEL_NOT_AVAILABLE (409): \"MakeMyTrip · Goibibo is available to hotels in India.\" [POST /connect-links]\n- LIVE_KEY_REQUIRED (409): \"A connect link connects a real booking site, so it is made with a live key. To see what a link tells you when it ends, send yourself a test event (POST /webhook-endpoints/{endpointId}/test with eventType channel.connect.completed).\" [POST /connect-links]\n- NOT_READY (409): \"This hotel is not ready to go live: Your software has not sent the next 365 nights yet.\" [POST /go-live]\n- KEY_NOT_FOUND (404): \"No such key among the ones you created on this property.\" [POST /properties/{propertyId}/keys/{keyId}/rotate, POST /properties/{propertyId}/keys/{keyId}/revoke]\n- KEY_LIMIT (409): \"A property may hold at most 5 active API keys. Revoke one first.\" [POST /properties/{propertyId}/keys]\n- KEY_REVOKED (401)\n- KEY_ALREADY_ROTATING (409) [POST /properties/{propertyId}/keys/{keyId}/rotate]\n- SCOPES_INVALID (400) [POST /properties/{propertyId}/keys]\n- ALLOWED_CIDRS_INVALID (400) [POST /properties/{propertyId}/keys]\n- REASON_REQUIRED (400) [POST /properties/{propertyId}/keys/{keyId}/revoke]\n- SUPPORT_TICKET_NOT_FOUND (404): \"Support ticket not found.\"\n- SUPPORT_TICKET_CLOSED (409): \"This ticket is closed. Open a new one and name this ticket in it.\"\n",
   "webhooks": "ZimmerStack POSTs a signed JSON event to the endpoint the hotel's owner (or a software vendor) registered.\n- Three more families, each only for an endpoint that lists its types: channel.connect.completed and channel.connect.expired (how a one-time connect link ended; data.connect names the link by linkId; it names its hotel and is in the event log); platform.incident.opened, .updated and .resolved (ZimmerStack's staff recorded an incident that touches your hotels; data.incident, with properties naming YOUR hotels it touches); support.ticket.replied and support.ticket.closed (ZimmerStack answered or closed your support ticket; data.ticket and data.message; company endpoints only). The incident and ticket events are about your account: they carry NO top-level property and NO sequence, are not in the event log, and Recover since does not replay them (zs.status.get() and zs.supportTickets.get(ticketId) are the reads). Narrow them with isConnectEvent(event), isIncidentEvent(event) and isSupportTicketEvent(event), and check the last two before any code that reads event.property.\n- Events: channel.booking.created, channel.booking.modified, channel.booking.cancelled (an OTA booking arrived, changed, was cancelled); direct.booking.created, direct.booking.modified, direct.booking.cancelled (a guest booked on the hotel's own website through ZimmerStack's booking engine, the hotel recorded that the guest did not arrive or undid that, or the booking was cancelled: topic website-bookings; an endpoint gets each only when it lists that type); channel.sync.alert and channel.sync.recovered (a channel problem began: a refused value, a disconnect, prices or room counts that stopped going out, a setting changed, named in data.sync.event; and ended); channel.drift.detected and channel.drift.healed (a nightly read found the channel manager holding something other than what you sent, data.drift.cells names the nights; then found it agreeing again: an endpoint gets them only when it lists the type); zimmerstack.ping (a test).\n- Envelope: { id, type, apiVersion, occurredAt, mode: \"live\" | \"test\", sequence, property: { id, name, currency, timezone }, data: { booking } (or { sync }, { drift }), changes, previous }.\n- sequence is the event's place in its hotel's ordered log, one higher than the hotel's last. The webhook is the nudge; the log is the truth (topic event-log): keep the last sequence you applied and read zs.events.all({ after }) from it, on every delivery, on a schedule and after a restart. A Test button's sample has no sequence.\n- data.booking.version counts that booking's events (1, 2, 3 …): a higher version is a later state, whatever order deliveries arrived in.\n- Signature (Standard Webhooks): headers webhook-id, webhook-timestamp, webhook-signature. The signature is \"v1,\" + base64(HMAC-SHA256(secret, id + \".\" + timestamp + \".\" + rawBody)); the secret is whsec_ + base64. During a rotation the header carries two, space-separated.\n- Verify the RAW body before parsing it, compare in constant time, and refuse a timestamp more than five minutes old. With this package: const event = await verifyWebhook(rawBody, headers, secret); it throws ZimmerStackWebhookError otherwise.\n- Deliveries are at-least-once and may arrive out of order: dedupe on event.id, order on occurredAt. Answer 2xx within seconds and do slow work afterwards.\n- GET /events (zs.events.all({ after })) replays every event in order; GET /channel-bookings (zs.channelBookings.all({ since })) and GET /direct-bookings (zs.directBookings.all({ since })) give each booking's latest state, for a first load or after the log's retention. They are not polling loops.\n- isSyncEvent(event) and isDriftEvent(event) narrow the channel events (data.sync, data.drift).\n- A partner's company key with the scope webhooks:manage manages its own endpoints by API (topic webhook-endpoints): zs.webhookEndpoints.*.\n- isWebsiteBookingEvent(event) says an event is a website booking (direct.booking.*); isOtaBookingEvent(event) says it is an OTA booking (channel.booking.*). The booking object is the same in both.\n- direct.booking.modified is a no-show or its undo, not a cancellation: status stays CONFIRMED, the payment is untouched, and data.booking.stayStatus says NOSHOW (free the room) or UPCOMING again (hold it). changes and previous are set on it, as on channel.booking.modified.\n",
-  "the-package": "@zimmerstack/connect 0.9.0: npm install @zimmerstack/connect. Node 20 or newer, on a server only, zero dependencies.\n\nconst zs = new ZimmerStack();   // reads ZIMMERSTACK_CONNECT_KEY; make one per process and reuse it\n\nEvery operation has a method: each operation's lookup names it (\"With the package\"). On top of those:\n- zs.grid.load(from, to): the whole rate grid for a window, ready for a screen. Rows are room types with their rate plans, columns are nights; prices in MAJOR units. Three reads (four the first time; the catalog is kept ten minutes).\n- zs.grid.save(edits): what a person changed, as single nights { availability?, rates?, restrictions? }. Folds nights into ranges, fills in the currency, splits a large save, sends one request per resource in turn. Returns the accepted answers, each with a batchId.\n- zs.batches.wait(batchId): asks every 15 seconds at the fastest, for at most five minutes; returns the last status (\"landed\", \"failed\", or still \"pending\").\n- zs.channelBookings.all({ since }): an async iterator over every OTA booking changed since then, following the cursor.\n- zs.directBookings.all({ since }): the same for the bookings guests made on the hotel's own website (scope direct-bookings:read). Read it before a full availability push.\n- zs.roomTypes.list(), zs.roomTypes.save(roomType), zs.roomTypes.delete(idOrRef) and zs.ratePlans.list(), zs.ratePlans.save(ratePlan), zs.ratePlans.delete(idOrRef): a hotel's room types and rate plans one at a time. save creates one, or changes it when that ref was sent before, and answers with its id. delete takes ZimmerStack's id (a number) or your own ref (a string), deletes for good, and a room type takes its rate plans with it. Scope catalog:write.\n- zs.properties.create(hotel) and zs.properties.delete(propertyId, { confirm }) (also zs.properties.remove): a software partner's company key adds a hotel and removes one it added, for good. Scope properties:write, a company key only. confirm is the hotel's exact name. With a test key they make and delete a sandbox.\n- zs.forProperty(propertyId): a software vendor's company key acting on one hotel. Each hotel has its own queue of writes and its own pace; what all the hotels share (the company's budget) is paced for all of them.\n- zs.limits.get(): every budget this key sits under (the key's, its hotel's, the company's), with its window, its quota, what is left and when it refills, and the budgets over an hour and a day. Any key; reading uses up nothing.\n- zs.events.all({ after }): an async iterator over the hotel's ordered event log from the sequence you saved to its end; each event carries its sequence, which is your new place. onGap tells you when the log no longer holds what follows your place. zs.events.list({ after }) is one page.\n- zs.requests.list({ status: \"errors\" }) and zs.requests.all(query): this key's own requests of the last 7 days (time, route, status, error code, address, request id; never a body).\n- zs.webhookEndpoints.list(), .create(body), .get(id), .update(id, body), .pause(id), .resume(id), .rotateSecret(id), .test(id, { eventType }), .recover(id, since), .delete(id) and zs.webhookEndpoints.deliveries.list(id, query), .get(id, deliveryId), .redeliver(id, deliveryId): a software partner's company key manages its own company webhook endpoints. Scope webhooks:manage. The signing secret is in the answer of create and rotateSecret only.\n- zs.sandbox.bookings.noShow(bookingId, { undo }) and zs.sandbox.syncEvents.create({ type, event }): with the three booking simulations, a real event of every type on a sandbox.\n- zs.availability.dryRun(updates), zs.rates.dryRun(updates), zs.restrictions.dryRun(updates): what the same set would do, with nothing written. The answer is a WritePreview (dryRun: true, verdict, wouldChange, unchanged, held, wouldReject, notices), never a WriteAccepted, so a dry run cannot be mistaken for a write. It spends the minute budgets like the write it previews.\n- noticesOf(answers), warningsOf(answers), findNotice(answers, code), noticesOmittedFrom(answers), noticeMeaning(code), isWritePreview(answer): the notices of a write's answer or a preview (what the write did NOT do), warnings first, each once across a split write. NOTICES lists every code with its level and meaning.\n- zs.availability.close(body) and zs.availability.reopen(body): close one room type on a range of nights everywhere (count 0 and stop-sell on every one of its rate plans), and undo exactly that. Read notReached in the answer. zs.availability.closeDryRun(body) and zs.availability.reopenDryRun(body) say what each would do. The real ones refuse a body that carries dryRun.\n- zs.explain.night({ roomTypeId, date, ratePlanId }): one night's whole story from ZimmerStack's record: what was last sent, what the record holds and who set it, what the channel manager was last seen holding, the sends and how they ended, summary in plain sentences. Scope ari:read.\n- zs.sandbox.faults.get(), zs.sandbox.faults.set(body), zs.sandbox.faults.clear(): make the sandbox's pretend channel refuse, throttle or go down, and end it. Prices and stay rules only.\n- zs.readiness.get() and zs.readiness.goLive(): the four readiness checks of a hotel that is not live yet, and the switch that makes your software its source of truth. Pass { beforeGoLive: true } on a call to send values ahead: prices and stay rules are stored and wait. Room counts are not sent ahead: until the hotel is live a count that lowers what is on sale goes out at once and one that raises it is refused in rejected, so send the room counts again right after going live.\n- zs.connectLinks.create(body), zs.connectLinks.list(query), zs.connectLinks.get(linkId), zs.connectLinks.revoke(linkId): one-time links with which a hotel's own person connects one booking site on ZimmerStack's hosted page. Scope channels:connect, a company key, a live key only. The url is in the create's answer only.\n- zs.hotelKeys.list(propertyId), zs.hotelKeys.create(propertyId, body), zs.hotelKeys.rotate(propertyId, keyId), zs.hotelKeys.revoke(propertyId, keyId, { reason }): the keys a software partner made on a hotel it added. Scope keys:manage, a company key. The key is in the answer of create and rotate only.\n- shownOnce(answer) and withoutShownOnce(answer): the value an answer shows once (a hotel key, a connect link's url, a webhook secret), or a ZimmerStackShownOnceError whose nextStep names the way back when the answer is a replay and the value is null; and a copy of the answer that is safe to log.\n- zs.billing.get(), zs.billing.invoices(), zs.billing.nextInvoice(): a software partner's bills, quota, money paid ahead and at-cost records, read only. Scope billing:read, a company key.\n- zs.supportTickets.create(body), zs.supportTickets.list(query), zs.supportTickets.all(query), zs.supportTickets.get(ticketId), zs.supportTickets.reply(ticketId, message), zs.supportTickets.close(ticketId): support tickets by API. Scope support:write, a company key. SUPPORT_SEVERITIES lists the three levels with their first-reply times.\n- zs.status.get(): the components and the incidents that touch this key's hotels. Any key.\n- diagnose(options) and formatDoctorReport(report): the doctor's checks from your own code (a health page, a deploy check). The command: npx @zimmerstack/connect doctor. It reads ZimmerStack's own status first, a hotel's readiness when it is not live, and one night when you name it (--room-type <id> --night <YYYY-MM-DD>; in code, the night option).\n- checkKey(value): is this string a ZimmerStack key, by its own checksum, without sending it. Returns { ok, mode, format | problem, message }; the message never contains the key.\n- Money on strings, never floats: toAmount(value, decimals), addAmounts(a, b, decimals), subtractAmounts(a, b, decimals), multiplyAmount(amount, factor, decimals), compareAmounts(a, b), formatAmount(amount, { currency, decimals, locale }); amountFromMinorUnits(units, decimals) and amountToMinorUnits(amount, decimals) for a ledger of whole cents or paise; amountFromHundredths(rateMinor, decimals) for the API's …Minor fields. decimals comes from GET /property, GET /catalog or GET /rates.\n- zs.request(\"GET /sync\"): any operation by its contract name, typed.\n- Pure helpers: eachDate(from, to), addDays(date, n), toRanges(cells), chunk(updates), buildGrid(parts), channelPrice(rate, steps).\n- verifyWebhook(rawBody, headers, secret): returns the event or throws ZimmerStackWebhookError.\n- isWebsiteBookingEvent(event), isOtaBookingEvent(event): tell the two booking families apart; BOOKING_EVENT_TYPES lists every type of both. isSyncEvent(event), isDriftEvent(event), isConnectEvent(event): the channel events. isIncidentEvent(event), isSupportTicketEvent(event): the two families about your account, which carry no property.\n- MODIFIER_TAKES_EFFECT: the sentence to show where a person saves a channel's modifier. LIMITS, ERROR_CODES, SCOPES: the contract's own.\n\nA refusal is a ZimmerStackError: code (stable; branch on it), message (for a person; show it), status, retryable (false = fix the request, never resend), retryAfterSeconds, scope (which budget), details, operation.\n\nOptions: apiKey, propertyId, timeoutMs (30 s), maxRetries (3), maxWaitSeconds (120; any call may pass its own), onEvent (every answer, wait and retry, for logs; never the key), fetch (a stand-in for tests), allowLiveWritesInTests.\n\nWhat it keeps by itself, so do not re-implement it or wrap its calls in a retry loop:\n- Server only: it refuses a browser and React Native, sends the key to ZimmerStack only, never follows a redirect with it and never prints it.\n- Reads every budget in the RateLimit headers and waits before one runs out. One hotel's writes go one at a time, in order (each hotel of a company key has its own queue and its own pace); at most four requests at once.\n- Sends a 429 again after its Retry-After (four attempts, the same idempotency key). Sends a 5xx or a network failure again only for a read or a write that carries an idempotency key. Throws anything else at once.\n- A wait over two minutes (an hour's or a day's budget) is handed back as a retryable error with retryAfterSeconds and freesAt, unless the call passed a longer maxWaitSeconds: then it is held, and onEvent is told when it lands. zs.limits.get() answers every budget with what is left.\n- A write the server keeps no idempotency record for is not resent when its outcome is unknown.\n- Splits a write at 1,000 updates or 5,000 cells.\n- After API_KEY_INVALID, API_KEY_REVOKED or API_KEY_EXPIRED it stops calling.\n- A zsk_live_ key under a test runner may read but not write.\n"
+  "the-package": "@zimmerstack/connect 0.9.1: npm install @zimmerstack/connect. Node 20 or newer, on a server only, zero dependencies.\n\nconst zs = new ZimmerStack();   // reads ZIMMERSTACK_CONNECT_KEY; make one per process and reuse it\n\nEvery operation has a method: each operation's lookup names it (\"With the package\"). On top of those:\n- zs.grid.load(from, to): the whole rate grid for a window, ready for a screen. Rows are room types with their rate plans, columns are nights; prices in MAJOR units. Three reads (four the first time; the catalog is kept ten minutes).\n- zs.grid.save(edits): what a person changed, as single nights { availability?, rates?, restrictions? }. Folds nights into ranges, fills in the currency, splits a large save, sends one request per resource in turn. Returns the accepted answers, each with a batchId.\n- zs.batches.wait(batchId): asks every 15 seconds at the fastest, for at most five minutes; returns the last status (\"landed\", \"failed\", or still \"pending\").\n- zs.channelBookings.all({ since }): an async iterator over every OTA booking changed since then, following the cursor.\n- zs.directBookings.all({ since }): the same for the bookings guests made on the hotel's own website (scope direct-bookings:read). Read it before a full availability push.\n- zs.roomTypes.list(), zs.roomTypes.save(roomType), zs.roomTypes.delete(idOrRef) and zs.ratePlans.list(), zs.ratePlans.save(ratePlan), zs.ratePlans.delete(idOrRef): a hotel's room types and rate plans one at a time. save creates one, or changes it when that ref was sent before, and answers with its id. delete takes ZimmerStack's id (a number) or your own ref (a string), deletes for good, and a room type takes its rate plans with it. Scope catalog:write.\n- zs.properties.create(hotel) and zs.properties.delete(propertyId, { confirm }) (also zs.properties.remove): a software partner's company key adds a hotel and removes one it added, for good. Scope properties:write, a company key only. confirm is the hotel's exact name. With a test key they make and delete a sandbox.\n- zs.properties.update(propertyId, changes): the same key changes the name or the address (line1, city, state, postalCode) of a hotel it added; only what is sent changes. Never the country, currency, time zone, owner or tax id. The answer's changed lists the fields that moved. With a test key it changes a sandbox.\n- zs.forProperty(propertyId): a software vendor's company key acting on one hotel. Each hotel has its own queue of writes and its own pace; what all the hotels share (the company's budget) is paced for all of them.\n- zs.limits.get(): every budget this key sits under (the key's, its hotel's, the company's), with its window, its quota, what is left and when it refills, and the budgets over an hour and a day. Any key; reading uses up nothing.\n- zs.events.all({ after }): an async iterator over the hotel's ordered event log from the sequence you saved to its end; each event carries its sequence, which is your new place. onGap tells you when the log no longer holds what follows your place. zs.events.list({ after }) is one page.\n- zs.requests.list({ status: \"errors\" }) and zs.requests.all(query): this key's own requests of the last 7 days (time, route, status, error code, address, request id; never a body).\n- zs.webhookEndpoints.list(), .create(body), .get(id), .update(id, body), .pause(id), .resume(id), .rotateSecret(id), .test(id, { eventType }), .recover(id, since), .delete(id) and zs.webhookEndpoints.deliveries.list(id, query), .get(id, deliveryId), .redeliver(id, deliveryId): a software partner's company key manages its own company webhook endpoints. Scope webhooks:manage. The signing secret is in the answer of create and rotateSecret only.\n- zs.sandbox.bookings.noShow(bookingId, { undo }) and zs.sandbox.syncEvents.create({ type, event }): with the three booking simulations, a real event of every type on a sandbox.\n- zs.availability.dryRun(updates), zs.rates.dryRun(updates), zs.restrictions.dryRun(updates): what the same set would do, with nothing written. The answer is a WritePreview (dryRun: true, verdict, wouldChange, unchanged, held, wouldReject, notices), never a WriteAccepted, so a dry run cannot be mistaken for a write. It spends the minute budgets like the write it previews.\n- noticesOf(answers), warningsOf(answers), findNotice(answers, code), noticesOmittedFrom(answers), noticeMeaning(code), isWritePreview(answer): the notices of a write's answer or a preview (what the write did NOT do), warnings first, each once across a split write. NOTICES lists every code with its level and meaning.\n- zs.availability.close(body) and zs.availability.reopen(body): close one room type on a range of nights everywhere (count 0 and stop-sell on every one of its rate plans), and undo exactly that. Read notReached in the answer. zs.availability.closeDryRun(body) and zs.availability.reopenDryRun(body) say what each would do. The real ones refuse a body that carries dryRun.\n- zs.explain.night({ roomTypeId, date, ratePlanId }): one night's whole story from ZimmerStack's record: what was last sent, what the record holds and who set it, what the channel manager was last seen holding, the sends and how they ended, summary in plain sentences. Scope ari:read.\n- zs.sandbox.faults.get(), zs.sandbox.faults.set(body), zs.sandbox.faults.clear(): make the sandbox's pretend channel refuse, throttle or go down, and end it. Prices and stay rules only.\n- zs.readiness.get() and zs.readiness.goLive(): the four readiness checks of a hotel that is not live yet, and the switch that makes your software its source of truth. Pass { beforeGoLive: true } on a call to send values ahead: prices and stay rules are stored and wait. Room counts are not sent ahead: until the hotel is live a count that lowers what is on sale goes out at once and one that raises it is refused in rejected, so send the room counts again right after going live.\n- zs.connectLinks.create(body), zs.connectLinks.list(query), zs.connectLinks.get(linkId), zs.connectLinks.revoke(linkId): one-time links with which a hotel's own person connects one booking site on ZimmerStack's hosted page. Scope channels:connect, a company key, a live key only. The url is in the create's answer only.\n- zs.hotelKeys.list(propertyId), zs.hotelKeys.create(propertyId, body), zs.hotelKeys.rotate(propertyId, keyId), zs.hotelKeys.revoke(propertyId, keyId, { reason }): the keys a software partner made on a hotel it added. Scope keys:manage, a company key. The key is in the answer of create and rotate only.\n- shownOnce(answer) and withoutShownOnce(answer): the value an answer shows once (a hotel key, a connect link's url, a webhook secret), or a ZimmerStackShownOnceError whose nextStep names the way back when the answer is a replay and the value is null; and a copy of the answer that is safe to log.\n- zs.billing.get(), zs.billing.invoices(), zs.billing.nextInvoice(): a software partner's bills, quota, money paid ahead and at-cost records, read only. Scope billing:read, a company key.\n- zs.supportTickets.create(body), zs.supportTickets.list(query), zs.supportTickets.all(query), zs.supportTickets.get(ticketId), zs.supportTickets.reply(ticketId, message), zs.supportTickets.close(ticketId): support tickets by API. Scope support:write, a company key. SUPPORT_SEVERITIES lists the three levels with their first-reply times.\n- zs.status.get(): the components and the incidents that touch this key's hotels. Any key.\n- diagnose(options) and formatDoctorReport(report): the doctor's checks from your own code (a health page, a deploy check). The command: npx @zimmerstack/connect doctor. It reads ZimmerStack's own status first, a hotel's readiness when it is not live, and one night when you name it (--room-type <id> --night <YYYY-MM-DD>; in code, the night option).\n- checkKey(value): is this string a ZimmerStack key, by its own checksum, without sending it. Returns { ok, mode, format | problem, message }; the message never contains the key.\n- Money on strings, never floats: toAmount(value, decimals), addAmounts(a, b, decimals), subtractAmounts(a, b, decimals), multiplyAmount(amount, factor, decimals), compareAmounts(a, b), formatAmount(amount, { currency, decimals, locale }); amountFromMinorUnits(units, decimals) and amountToMinorUnits(amount, decimals) for a ledger of whole cents or paise; amountFromHundredths(rateMinor, decimals) for the API's …Minor fields. decimals comes from GET /property, GET /catalog or GET /rates.\n- zs.request(\"GET /sync\"): any operation by its contract name, typed.\n- Pure helpers: eachDate(from, to), addDays(date, n), toRanges(cells), chunk(updates), buildGrid(parts), channelPrice(rate, steps).\n- verifyWebhook(rawBody, headers, secret): returns the event or throws ZimmerStackWebhookError.\n- isWebsiteBookingEvent(event), isOtaBookingEvent(event): tell the two booking families apart; BOOKING_EVENT_TYPES lists every type of both. isSyncEvent(event), isDriftEvent(event), isConnectEvent(event): the channel events. isIncidentEvent(event), isSupportTicketEvent(event): the two families about your account, which carry no property.\n- MODIFIER_TAKES_EFFECT: the sentence to show where a person saves a channel's modifier. LIMITS, ERROR_CODES, SCOPES: the contract's own.\n\nA refusal is a ZimmerStackError: code (stable; branch on it), message (for a person; show it), status, retryable (false = fix the request, never resend), retryAfterSeconds, scope (which budget), details, operation.\n\nOptions: apiKey, propertyId, timeoutMs (30 s), maxRetries (3), maxWaitSeconds (120; any call may pass its own), onEvent (every answer, wait and retry, for logs; never the key), fetch (a stand-in for tests), allowLiveWritesInTests.\n\nWhat it keeps by itself, so do not re-implement it or wrap its calls in a retry loop:\n- Server only: it refuses a browser and React Native, sends the key to ZimmerStack only, never follows a redirect with it and never prints it.\n- Reads every budget in the RateLimit headers and waits before one runs out. One hotel's writes go one at a time, in order (each hotel of a company key has its own queue and its own pace); at most four requests at once.\n- Sends a 429 again after its Retry-After (four attempts, the same idempotency key). Sends a 5xx or a network failure again only for a read or a write that carries an idempotency key. Throws anything else at once.\n- A wait over two minutes (an hour's or a day's budget) is handed back as a retryable error with retryAfterSeconds and freesAt, unless the call passed a longer maxWaitSeconds: then it is held, and onEvent is told when it lands. zs.limits.get() answers every budget with what is left.\n- A write the server keeps no idempotency record for is not resent when its outcome is unknown.\n- Splits a write at 1,000 updates or 5,000 cells.\n- After API_KEY_INVALID, API_KEY_REVOKED or API_KEY_EXPIRED it stops calling.\n- A zsk_live_ key under a test runner may read but not write.\n"
  }
 };

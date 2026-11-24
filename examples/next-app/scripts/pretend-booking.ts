@@ -1,6 +1,6 @@
 import { zs } from "@/lib/zimmerstack";
 
-/** The sandbox (https://docs.zimmerstack.com/sandbox): have ZimmerStack send you an OTA booking. Test keys only. */
+/** The sandbox (https://docs.zimmerstack.com/guides/sandbox): have ZimmerStack send you an OTA booking. Test keys only. */
 export async function pretendBooking(roomTypeId: number, checkIn: string): Promise<void> {
   // #region pretend-booking
   // A pretend Booking.com guest on your sandbox. The nights come off the room type's availability and
