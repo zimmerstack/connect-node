@@ -115,6 +115,10 @@ const batch = await hotel.batches.wait(accepted[0]!.batchId);
 console.log(batch.status); // "landed"
 ```
 
+An update can also name its room type or rate plan by your own ref, so there is no id to read first:
+`{ roomTypeRef: "rt-deluxe", … }` in `availability.set`, and `{ ratePlanRef: "rp-bb", … }` in `rates.set`
+and `restrictions.set`. Send the ref or the id, never both.
+
 Each step has its own page in the docs, with every field explained:
 [get a test key](https://docs.zimmerstack.com/partner/test-key) ·
 [make your first call](https://docs.zimmerstack.com/partner/first-call) ·
@@ -162,7 +166,7 @@ calls ZimmerStack.
 | List a hotel's room types and rate plans | `zs.roomTypes.list()` · `zs.ratePlans.list()` |
 | Create or change a room type or a rate plan | `zs.roomTypes.save(roomType)` · `zs.ratePlans.save(ratePlan)` |
 | Delete a room type or a rate plan | `zs.roomTypes.delete(idOrRef)` · `zs.ratePlans.delete(idOrRef)` |
-| Charge a different price on one booking site | `zs.channels.setModifier(channelId, steps)` |
+| Set a price modifier on one booking site | `zs.channels.setModifier(channelId, steps)` |
 | Read the bookings the booking sites sent | `zs.channelBookings.list()`, or a webhook |
 | Read every booking and channel event, in order, from where I stopped | `zs.events.all({ after })` |
 | Read the bookings made on the hotel's own website | `zs.directBookings.list()` |
@@ -348,13 +352,20 @@ plan.id; // name it when you set prices and stay rules
 // Send the same ref again to change it. It never makes a second one.
 await zs.roomTypes.save({ ref: "deluxe", name: "Deluxe Garden Room", roomCount: 8, adults: 2 });
 
-// Delete by your own ref, or by ZimmerStack's id. There is no undo.
+// Delete by your own ref (a string), or by ZimmerStack's id (a number). There is no undo.
 await zs.ratePlans.delete("deluxe-bb");
 await zs.roomTypes.delete("deluxe"); // its rate plans are deleted with it
 ```
 
 - These calls need the permission `catalog:write` on the key.
 - To send many at once, use `zs.catalog.upsertRoomTypes(body)` and `zs.catalog.upsertRatePlans(body)`.
+- A delete by your ref is one request. The API finds what the ref names among the hotel's own room types
+  or rate plans (`DELETE /catalog/room-types/ref:deluxe`). A string is always read as a ref: `"412"` is
+  the ref 412, never the id 412.
+- A room type or a rate plan made on ZimmerStack's own screens has no ref. Delete it by its id, the
+  number `zs.roomTypes.list()` and `zs.ratePlans.list()` give.
+- The same two deletes, named as the API names them: `zs.catalog.deleteRoomType(412)` or
+  `zs.catalog.deleteRoomType({ ref: "deluxe" })`, and `zs.catalog.deleteRatePlan` in the same way.
 - A delete is refused while a booking site still sells that room or plan. Unmap it on the booking site's
   connection first. Nothing is deleted when a delete is refused.
 - Call a delete only when a person chose to delete that one thing. Never from a loop or a clean-up
@@ -456,7 +467,7 @@ taxes sit inside its prices.
 
 Guide: <https://docs.zimmerstack.com/guides/webhooks>
 
-## A different price on each booking site
+## A price modifier on one booking site
 
 You send one price for each rate plan and night. A booking site's **modifier** changes it for that site
 only: a few steps, applied in order.
@@ -564,10 +575,18 @@ Guide: <https://docs.zimmerstack.com/guides/add-and-remove-hotels>
 A software company's **company key** can do three more things without the partner portal (from 0.9.0).
 Each needs its own permission, ticked when the key is made.
 
-**A connect link.** The hotel's own person connects a booking site. Only Airbnb is connected from
-the link alone: the host signs in on Airbnb's own page. Every other booking site must first accept
-our connectivity partner for the hotel, in its extranet or through its support. That step can take
-days, and no call does it: `hotelStep` in the answer says how.
+**A connect link: the last step, never the first.** A link alone does not connect a booking site,
+except Airbnb (there the host signs in on Airbnb's own page). Every other booking site must first
+accept our connectivity partner for the hotel, in its extranet or through its support. That step
+can take days, and no call does it: `hotelStep` in the answer says how. Until it is done, the booking
+site refuses what the hotel types on the link's page.
+
+1. At the booking site, first: the hotel's step (`hotelStep`).
+2. Then the link: the hotel's person types the hotel's id at the booking site.
+3. Then the mapping: they match each room and rate there to one of the hotel's rate plans.
+4. Then Start selling: the whole calendar is sent, and bookings start to reach you.
+
+Every step: <https://docs.zimmerstack.com/guides/connect-an-ota#how-it-unfolds>
 
 ```ts
 import { shownOnce } from "@zimmerstack/connect";

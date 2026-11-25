@@ -2,7 +2,7 @@
 // Do not edit: change the contract, then run `pnpm --dir apps/connect-sdk run generate`.
 
 /** This package's version, sent as the user agent so ZimmerStack can tell which client a request came from. */
-export const SDK_VERSION = "0.9.1";
+export const SDK_VERSION = "1.0.0";
 /** Where the API lives. The key is sent nowhere else. */
 export const API_ORIGIN = "https://api.zimmerstack.com";
 export const API_PREFIX = "/api/v1/connect-api/v1";
@@ -746,8 +746,10 @@ export interface AvailabilityRead {
 
 export interface AvailabilityWrite {
   updates: Array<{
-    /** ZimmerStack room type id (GET /catalog) */
-    roomTypeId: number;
+    /** ZimmerStack room type id (GET /catalog). Name the room type by this or by roomTypeRef, exactly one */
+    roomTypeId?: number;
+    /** Your own ref for the room type: the one you gave it in PUT /catalog/room-types or POST /properties (GET /catalog reads it back). Name the room type by this or by roomTypeId, exactly one. A room type the hotel's owner made has no ref of yours: name it by roomTypeId */
+    roomTypeRef?: string;
     /** Hotel-local calendar date, YYYY-MM-DD */
     dateFrom: string;
     /** Hotel-local calendar date, YYYY-MM-DD */
@@ -782,8 +784,10 @@ export interface RatesRead {
 
 export interface RatesWrite {
   updates: Array<{
-    /** ZimmerStack rate plan id (GET /catalog) */
-    ratePlanId: number;
+    /** ZimmerStack rate plan id (GET /catalog). Name the rate plan by this or by ratePlanRef, exactly one */
+    ratePlanId?: number;
+    /** Your own ref for the rate plan: the one you gave it in PUT /catalog/rate-plans (GET /catalog reads it back). Name the rate plan by this or by ratePlanId, exactly one. A rate plan the hotel's owner made has no ref of yours, and neither has the one POST /properties makes for each room type: name it by ratePlanId */
+    ratePlanRef?: string;
     /** Hotel-local calendar date, YYYY-MM-DD */
     dateFrom: string;
     /** Hotel-local calendar date, YYYY-MM-DD */
@@ -818,8 +822,10 @@ export interface RestrictionsRead {
 
 export interface RestrictionsWrite {
   updates: Array<{
-    /** ZimmerStack rate plan id (GET /catalog) */
-    ratePlanId: number;
+    /** ZimmerStack rate plan id (GET /catalog). Name the rate plan by this or by ratePlanRef, exactly one */
+    ratePlanId?: number;
+    /** Your own ref for the rate plan: the one you gave it in PUT /catalog/rate-plans (GET /catalog reads it back). Name the rate plan by this or by ratePlanId, exactly one. A rate plan the hotel's owner made has no ref of yours, and neither has the one POST /properties makes for each room type: name it by ratePlanId */
+    ratePlanRef?: string;
     /** Hotel-local calendar date, YYYY-MM-DD */
     dateFrom: string;
     /** Hotel-local calendar date, YYYY-MM-DD */
@@ -1221,8 +1227,10 @@ export interface BookingsList {
 }
 
 export interface SandboxBookingCreate {
-  /** A room type of the sandbox (GET /catalog) */
-  roomTypeId: number;
+  /** ZimmerStack room type id (GET /catalog). Name the room type by this or by roomTypeRef, exactly one */
+  roomTypeId?: number;
+  /** Your own ref for the room type: the one you gave it in PUT /catalog/room-types or POST /properties (GET /catalog reads it back). Name the room type by this or by roomTypeId, exactly one. A room type the hotel's owner made has no ref of yours: name it by roomTypeId */
+  roomTypeRef?: string;
   /** Arrival, YYYY-MM-DD in the property's timezone; today or later, within the horizon */
   checkIn: string;
   /** 1–30; checkout = checkIn + nights */
@@ -3373,8 +3381,10 @@ export interface WritePreview {
 }
 
 export interface CloseRoomType {
-  /** ZimmerStack room type id (GET /catalog) */
-  roomTypeId: number;
+  /** ZimmerStack room type id (GET /catalog). Name the room type by this or by roomTypeRef, exactly one */
+  roomTypeId?: number;
+  /** Your own ref for the room type: the one you gave it in PUT /catalog/room-types or POST /properties (GET /catalog reads it back). Name the room type by this or by roomTypeId, exactly one. A room type the hotel's owner made has no ref of yours: name it by roomTypeId */
+  roomTypeRef?: string;
   /** Hotel-local calendar date, YYYY-MM-DD */
   dateFrom: string;
   /** Hotel-local calendar date, YYYY-MM-DD */
@@ -3386,8 +3396,10 @@ export interface CloseRoomType {
 }
 
 export interface ReopenRoomType {
-  /** ZimmerStack room type id (GET /catalog) */
-  roomTypeId: number;
+  /** ZimmerStack room type id (GET /catalog). Name the room type by this or by roomTypeRef, exactly one */
+  roomTypeId?: number;
+  /** Your own ref for the room type: the one you gave it in PUT /catalog/room-types or POST /properties (GET /catalog reads it back). Name the room type by this or by roomTypeId, exactly one. A room type the hotel's owner made has no ref of yours: name it by roomTypeId */
+  roomTypeRef?: string;
   /** Hotel-local calendar date, YYYY-MM-DD */
   dateFrom: string;
   /** Hotel-local calendar date, YYYY-MM-DD */
@@ -3753,7 +3765,7 @@ export interface Operations {
   /** Reopen a room type that POST /availability/close closed */
   "POST /availability/reopen": { path: undefined; query: undefined; body: ReopenRoomType; response: CloseResult };
   /** Explain this night */
-  "GET /explain": { path: undefined; query: { roomTypeId: number; ratePlanId?: number; date: string }; body: undefined; response: Explain };
+  "GET /explain": { path: undefined; query: { roomTypeId?: number; roomTypeRef?: string; ratePlanId?: number; ratePlanRef?: string; date: string }; body: undefined; response: Explain };
   /** Sandbox: the fault in force on the pretend channel */
   "GET /sandbox/faults": { path: undefined; query: undefined; body: undefined; response: SandboxFaultView };
   /** Sandbox: make the pretend channel refuse, throttle or go down */
@@ -3850,7 +3862,7 @@ export interface Operations {
   "GET /batches/{batchId}": { path: { batchId: string | number }; query: undefined; body: undefined; response: BatchStatus };
   /** Your one-time connect links (a software partner's company key) */
   "GET /connect-links": { path: undefined; query: { propertyId?: number; limit?: number }; body: undefined; response: ConnectLinkList };
-  /** Make a one-time connect link for one hotel and one booking site */
+  /** Make a one-time connect link for one hotel and one booking site (the last step of connecting it) */
   "POST /connect-links": { path: undefined; query: undefined; body: ConnectLinkCreate; response: ConnectLinkCreated };
   /** Where one connect link stands */
   "GET /connect-links/{linkId}": { path: { linkId: string | number }; query: undefined; body: undefined; response: ConnectLink };

@@ -59,7 +59,11 @@ export class ZimmerStackError extends Error {
 /** Codes this client raises itself, before or instead of an answer from the API. */
 export type LocalErrorCode = "LIVE_KEY_IN_TEST" | "NETWORK_ERROR" | "TIMEOUT";
 
-/** A mistake in how the client was set up or called. Nothing was sent. */
+/**
+ * A mistake in how the client was set up or called. Nothing was sent, with one exception:
+ * `zs.roomTypes.delete(ref)` and `zs.ratePlans.delete(ref)` with a ref the hotel does not hold. The
+ * API is what looks a ref up, so that delete was sent and refused; nothing was deleted.
+ */
 export class ZimmerStackUsageError extends Error {
   constructor(message: string) {
     super(message);

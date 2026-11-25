@@ -219,6 +219,19 @@ function savedOne(result: CatalogUpsertResult): StructureSaved {
   return { ...item, channelManager: result.channelManager };
 }
 
+/**
+ * The last part of a delete's address on /catalog: ZimmerStack's id as it is, or `ref:` and your own
+ * ref (DELETE /catalog/room-types/ref:deluxe). What a ref names, and whether the text can be a ref at
+ * all, is the API's to say: it answers its 404 for either.
+ */
+function deleteTarget(what: "room type" | "rate plan", idOrRef: number | { ref: string }): string | number {
+  if (typeof idOrRef !== "object" || idOrRef === null) return idOrRef;
+  if (typeof idOrRef.ref !== "string" || idOrRef.ref.trim() === "") {
+    throw new ZimmerStackUsageError(`To delete a ${what} by your own ref, pass { ref } with the ref you gave it (a string). Or pass ZimmerStack's id (a number).`);
+  }
+  return `ref:${idOrRef.ref}`;
+}
+
 type Op<K extends OperationKey> = Operations[K];
 /** What `request` takes for an operation: its path values, its query, its body. */
 export type RequestArgs<K extends OperationKey> = (Op<K>["path"] extends undefined ? { path?: undefined } : { path: Op<K>["path"] }) &
@@ -844,7 +857,9 @@ export class ZimmerStack {
     const path = template.replace(/\{(\w+)\}/g, (_m, name: string) => {
       const value = args.path?.[name];
       if (value === undefined || value === null || String(value) === "") throw new ZimmerStackUsageError(`${operation} needs ${name}`);
-      return encodeURIComponent(String(value));
+      // A colon is a character a path segment holds as it is, so it is sent as written: a delete by your own
+      // ref ends with ref:<ref>, the same address the docs and the Postman files show. All else is encoded.
+      return encodeURIComponent(String(value)).replace(/%3A/g, ":");
     });
     const url = new URL(this.#core.base + API_PREFIX + path);
     for (const [name, value] of Object.entries(args.query ?? {})) if (value !== undefined && value !== null) url.searchParams.set(name, String(value));
@@ -1373,12 +1388,25 @@ export class ZimmerStack {
     },
     /** Create or change room types by your own `ref`. Needs the scope catalog:write. */
     upsertRoomTypes: (body: RoomTypesUpsert, options?: WriteOptions) => this.#structure("PUT /catalog/room-types", { body, ...options }),
-    /** Delete a room type; its rate plans go with it. */
-    deleteRoomType: (roomTypeId: number, options?: ReadOptions) => this.#structure("DELETE /catalog/room-types/{roomTypeId}", { path: { roomTypeId }, ...options }),
+    /**
+     * Delete a room type; its rate plans go with it. Name it by ZimmerStack's id (a number), or by your
+     * own ref as `{ ref }`: the address then ends with `ref:` and the ref, and the API finds the room
+     * type that ref names among this hotel's own. A ref the hotel does not hold is ROOM_TYPE_NOT_FOUND.
+     *
+     * @example
+     * await zs.catalog.deleteRoomType(412); // by ZimmerStack's id
+     * await zs.catalog.deleteRoomType({ ref: "deluxe" }); // by your ref
+     */
+    deleteRoomType: async (roomTypeId: number | { ref: string }, options?: ReadOptions) =>
+      this.#structure("DELETE /catalog/room-types/{roomTypeId}", { path: { roomTypeId: deleteTarget("room type", roomTypeId) }, ...options }),
     /** Create or change rate plans by your own `ref`. */
     upsertRatePlans: (body: RatePlansUpsert, options?: WriteOptions) => this.#structure("PUT /catalog/rate-plans", { body, ...options }),
-    /** Delete a rate plan. Refused while a channel still sells it. */
-    deleteRatePlan: (ratePlanId: number, options?: ReadOptions) => this.#structure("DELETE /catalog/rate-plans/{ratePlanId}", { path: { ratePlanId }, ...options }),
+    /**
+     * Delete a rate plan, by ZimmerStack's id (a number) or by your own ref as `{ ref }`. Refused while
+     * a booking site still has a match to it. A ref the hotel does not hold is RATE_PLAN_NOT_FOUND.
+     */
+    deleteRatePlan: async (ratePlanId: number | { ref: string }, options?: ReadOptions) =>
+      this.#structure("DELETE /catalog/rate-plans/{ratePlanId}", { path: { ratePlanId: deleteTarget("rate plan", ratePlanId) }, ...options }),
   };
 
   /* ── the same room types and rate plans, one at a time, under the names you would look for ── */
@@ -1412,8 +1440,7 @@ export class ZimmerStack {
      * await zs.roomTypes.delete("deluxe"); // by your ref
      * await zs.roomTypes.delete(412); // by ZimmerStack's id
      */
-    delete: async (idOrRef: number | string, options?: ReadOptions): Promise<CatalogDeleteResult> =>
-      this.catalog.deleteRoomType(await this.#structureId("roomTypes", idOrRef, options?.signal), options),
+    delete: async (idOrRef: number | string, options?: ReadOptions): Promise<CatalogDeleteResult> => this.#deleteOne("roomTypes", idOrRef, options),
   };
 
   readonly ratePlans = {
@@ -1442,29 +1469,38 @@ export class ZimmerStack {
      * await zs.ratePlans.delete("deluxe-bb"); // by your ref
      * await zs.ratePlans.delete(901); // by ZimmerStack's id
      */
-    delete: async (idOrRef: number | string, options?: ReadOptions): Promise<CatalogDeleteResult> =>
-      this.catalog.deleteRatePlan(await this.#structureId("ratePlans", idOrRef, options?.signal), options),
+    delete: async (idOrRef: number | string, options?: ReadOptions): Promise<CatalogDeleteResult> => this.#deleteOne("ratePlans", idOrRef, options),
   };
 
   /**
-   * The id a delete acts on. A number is ZimmerStack's id already. A string is your own `ref`: it is
-   * looked up in a fresh read of the catalog, never a kept copy, because a delete must act on what
-   * exists now.
+   * One delete. A number is ZimmerStack's id. A string is your own `ref`: it goes to the API as it is
+   * (the address ends with `ref:` and the ref), and the API finds what it names among the hotel's room
+   * types or rate plans as they are at that moment, in the same request that deletes. So a delete acts
+   * on what exists now, never on a kept copy of the catalog, and it is one request.
+   *
+   * A ref the hotel does not hold comes back from the API as a 404. It is thrown as the usage error
+   * this method always threw for it, with the same words: the call named something that is not there,
+   * and nothing was deleted.
    */
-  async #structureId(kind: "roomTypes" | "ratePlans", idOrRef: number | string, signal: AbortSignal | undefined): Promise<number> {
+  async #deleteOne(kind: "roomTypes" | "ratePlans", idOrRef: number | string, options: ReadOptions | undefined): Promise<CatalogDeleteResult> {
     const what = kind === "roomTypes" ? "room type" : "rate plan";
+    const send = (target: number | { ref: string }) => (kind === "roomTypes" ? this.catalog.deleteRoomType(target, options) : this.catalog.deleteRatePlan(target, options));
     if (typeof idOrRef === "number") {
       if (!Number.isInteger(idOrRef) || idOrRef <= 0) throw new ZimmerStackUsageError(`A ${what}'s id is a whole number above 0; zs.${kind}.list() names them`);
-      return idOrRef;
+      return send(idOrRef);
     }
     if (typeof idOrRef !== "string" || idOrRef.trim() === "") {
       throw new ZimmerStackUsageError(`zs.${kind}.delete takes the ${what}'s id (a number) or your own ref for it (a string)`);
     }
-    const hit = (await this.catalog.get({ signal }))[kind].find((entity) => entity.ref === idOrRef);
-    if (!hit) {
+    try {
+      return await send({ ref: idOrRef });
+    } catch (err) {
+      // Only the API's own "no such room type / rate plan". A hotel the key may not act on (PROPERTY_NOT_FOUND)
+      // and every other refusal are thrown as they came.
+      const notFound = kind === "roomTypes" ? "ROOM_TYPE_NOT_FOUND" : "RATE_PLAN_NOT_FOUND";
+      if (!(err instanceof ZimmerStackError) || err.status !== 404 || err.code !== notFound) throw err;
       throw new ZimmerStackUsageError(`This hotel has no ${what} with the ref "${idOrRef}". zs.${kind}.list() names every one with its id and ref; a ${what} made on ZimmerStack's own screens has no ref, so delete it by its id.`);
     }
-    return hit.id;
   }
 
   async #structure<K extends OperationKey>(operation: K, args: RequestArgs<K>): Promise<Op<K>["response"]> {
@@ -1529,6 +1565,13 @@ export class ZimmerStack {
     /**
      * Set rooms left to sell: absolute numbers over date ranges. Answers when the values are in
      * ZimmerStack's record (one answer per request sent; a large write is split for you).
+     *
+     * Each update names its room type by ZimmerStack's id (`roomTypeId`) or by your own ref
+     * (`roomTypeRef`, the ref you gave it in `roomTypes.save`), one of the two. The answer is the same
+     * either way. A room type made on ZimmerStack's own screens has no ref: name it by its id.
+     *
+     * @example
+     * await zs.availability.set([{ roomTypeRef: "rt-deluxe", dateFrom: "2026-12-24", dateTo: "2026-12-26", available: 3 }]);
      */
     set: (updates: AvailabilityWrite["updates"], options?: WriteOptions) => this.#writeAll("PUT /availability", updates, options),
     /**
@@ -1590,7 +1633,8 @@ export class ZimmerStack {
      * currency's own decimals (4500.5 or "4500.50"). `currency` may be left out: the hotel's own is
      * filled in. What could not be kept as sent is named in the answer's `rounded` list. Never a zero
      * price to stop selling: `restrictions.set` with stopSell closes one rate plan on a night, and
-     * `availability.set` with 0 rooms closes the room type on every booking site.
+     * `availability.set` with 0 rooms closes the room type on every booking site. Each update names its
+     * rate plan by ZimmerStack's id (`ratePlanId`) or by your own ref (`ratePlanRef`), one of the two.
      */
     set: async (updates: Array<Omit<RatesWrite["updates"][number], "currency"> & { currency?: string }>, options?: WriteOptions): Promise<WriteAccepted[]> => {
       if (updates.length === 0) return [];
@@ -1618,7 +1662,7 @@ export class ZimmerStack {
   readonly restrictions = {
     /** The stay rules per rate plan per night; null = no rule set for that field. */
     get: (range?: { from?: string; to?: string }, options?: ReadOptions) => this.request("GET /restrictions", { query: range, ...options }),
-    /** Set stay rules over date ranges: stopSell, closedToArrival, closedToDeparture, minStayArrival, minStayThrough, maxStay. */
+    /** Set stay rules over date ranges: stopSell, closedToArrival, closedToDeparture, minStayArrival, minStayThrough, maxStay. Each update names its rate plan by `ratePlanId` or by your own ref, `ratePlanRef`. */
     set: (updates: RestrictionsWrite["updates"], options?: WriteOptions) => this.#writeAll("PUT /restrictions", updates, options),
     /**
      * What `set` WOULD do with these stay rules, and nothing is written. The notices are the point: a
@@ -1647,11 +1691,17 @@ export class ZimmerStack {
      * than the ones whose values are kept (`searched` says how far it looked); `channels.known: false` means
      * the hotel's connections have not been read yet. Scope ari:read; it calls no channel, so ask freely.
      *
+     * Name the room type by ZimmerStack's id (`roomTypeId`) or by your own ref (`roomTypeRef`), one of the
+     * two; the rate plan, when you name one, by `ratePlanId` or by `ratePlanRef`.
+     *
      * @example
      * const night = await zs.explain.night({ roomTypeId: 412, date: "2026-12-31" });
      * for (const sentence of night.summary) console.log(sentence);
      */
-    night: (query: { roomTypeId: number; date: string; ratePlanId?: number }, options?: ReadOptions): Promise<Explain> => this.request("GET /explain", { query, ...options }),
+    night: (
+      query: { date: string } & ({ roomTypeId: number; roomTypeRef?: never } | { roomTypeRef: string; roomTypeId?: never }) & ({ ratePlanId?: number; ratePlanRef?: never } | { ratePlanRef?: string; ratePlanId?: never }),
+      options?: ReadOptions
+    ): Promise<Explain> => this.request("GET /explain", { query, ...options }),
   };
 
   /* ── has it reached the channels? ── */
