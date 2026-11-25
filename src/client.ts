@@ -28,6 +28,7 @@ import {
   type DirectBookingCancelResult,
   type EventsList,
   type Explain,
+  type FullSyncResult,
   type GoLiveResult,
   type HotelKey,
   type HotelKeyCreate,
@@ -44,6 +45,7 @@ import {
   type PropertyChanged,
   type PropertyCreate,
   type PropertyCreated,
+  type PropertyFullSyncResult,
   type PropertyRemoved,
   type RatePlansUpsert,
   type RatesResendAccepted,
@@ -277,11 +279,18 @@ const EVERY_WRITE: ReadonlySet<string> = new Set(["key-writes", "property-writes
 /** What a refusal's `data.scope` is called in the headers: only the key's own two differ. */
 const HEADER_OF_SCOPE: Readonly<Record<string, string>> = { requests: "key", writes: "key-writes" };
 /**
+ * A budget that is one CHANNEL's own, on an operation whose address names the channel: one full sync an hour
+ * for each channel. A refusal for one channel says nothing about the hotel's other channels, and the client
+ * remembers a refusal by its operation, not by its address. So it is never remembered: the next call is sent.
+ */
+const PER_CHANNEL_BUDGETS = ["full-sync-hour"] as const;
+/**
  * The channel shield's budgets over an hour and a day, and its pause. A write that only CLOSES inventory is
  * still accepted while they are used up (the safety lane), and only the server can tell which write that
  * is. So the client never holds a write back for one of these: it sends, and reports what the API answers.
+ * The per-channel budgets above are never held back either, for their own reason.
  */
-const NEVER_HELD_BACK: ReadonlySet<string> = new Set(["cells-hour", "cells-day", "vendor-cells-day", "shield-pause", "shield-lane"]);
+const NEVER_HELD_BACK: ReadonlySet<string> = new Set(["cells-hour", "cells-day", "vendor-cells-day", "shield-pause", "shield-lane", ...PER_CHANNEL_BUDGETS]);
 /** A wait this long or shorter is the pace of a minute's budget: always waited out, whatever `maxWaitSeconds` says. */
 const SHORT_WAIT_MS = 65_000;
 
@@ -1748,6 +1757,35 @@ export class ZimmerStack {
      */
     setModifier: (channelId: string, steps: ModifierStep[], options?: WriteOptions): Promise<ModifierResult> =>
       this.request("PUT /channels/{channelId}/modifier", { path: { channelId }, body: { steps }, ...options }),
+    /**
+     * A full sync of ONE channel: the channel manager sends that channel everything it holds again, room
+     * counts, prices and stay rules, for every date. Nothing of your own numbers is sent and none of them
+     * changes. Use it when one channel shows something the channel manager does not hold. It is not
+     * `rates.resend`, which sends YOUR prices to the channel manager again. Needs the scope ari:write.
+     *
+     * A channel takes one full sync an hour, whoever started the last one: one the hotel's owner started in
+     * ZimmerStack counts too. Inside the hour this throws a ZimmerStackError with code RATE_LIMITED and scope
+     * "full-sync-hour"; `retryAfterSeconds` says how long to wait. A paused channel is CHANNEL_PAUSED. On a
+     * sandbox nothing is sent: `started` is false and `notice` says why. Make it a deliberate button, never
+     * automatic and never on a timer.
+     *
+     * @example
+     * const sync = await zs.channels.fullSync(channelId);
+     * if (sync.started) console.log("Sent. The next full sync of this channel is taken at", sync.nextAt);
+     */
+    fullSync: (channelId: string, options?: WriteOptions): Promise<FullSyncResult> => this.request("POST /channels/{channelId}/full-sync", { path: { channelId }, ...options }),
+    /**
+     * The same full sync on EVERY channel of the hotel, one after another. The answer has one line for each
+     * channel: `started: true`, or a `code` that says why not (RATE_LIMITED with `retryAt` when that channel
+     * had one within the last hour, CHANNEL_PAUSED, CHANNEL_NOT_FOUND, CHANNEL_MANAGER_ERROR). One channel
+     * that cannot go never stops the others, and none of this throws: read `channels`. `started` counts the
+     * ones that began. On a sandbox nothing is sent: `channels` is empty and `notice` says why.
+     *
+     * @example
+     * const sync = await zs.channels.fullSyncAll();
+     * for (const line of sync.channels) if (!line.started) console.log(line.channelId, line.code, line.retryAt ?? "");
+     */
+    fullSyncAll: (options?: WriteOptions): Promise<PropertyFullSyncResult> => this.request("POST /full-sync", options),
   };
 
   /* ── bookings from your own booking engine ── */

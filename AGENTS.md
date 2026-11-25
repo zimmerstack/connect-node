@@ -105,6 +105,7 @@ hotel gets more, and `zs.limits.get()` says exactly.
 - `partner-connect-links-hour`: 120 connect links, rolling hour, per software partner.
 - `modifier-changes-day`: 6 changes, rolling 24 hours, per property.
 - `rate-resends-day`: 3 re-sends, rolling 24 hours, per property.
+- `full-sync-hour`: 1 full sync, rolling hour, per OTA connection.
 - `partner-support-tickets-day`: 20 tickets, rolling 24 hours, per software partner.
 - `partner-support-messages-hour`: 60 messages, rolling hour, per software partner.
 - `maxUpdatesPerRequest`: 1,000 entries, per request.
@@ -376,6 +377,18 @@ hotel gets more, and `zs.limits.get()` says exactly.
   per hotel, never automatic.
 - Keep the grid on the price before any modifier; show a channel's price beside it with
   `channelPrice(rate, steps)`.
+
+## A full sync
+
+- `zs.channels.fullSync(channelId)` is a full sync of one channel; `zs.channels.fullSyncAll()` of every
+  channel of the hotel. A full sync makes the channel manager send one OTA everything it holds again: room counts, prices and stay rules, for every date. POST /channels/{channelId}/full-sync does it for one OTA connection (channelId as GET /channels gives it); POST /full-sync for every connection of the hotel, one after another. Scope ari:write, a live hotel, as for POST /rates/resend.
+- It is not POST /rates/resend. A re-send sends OUR record's prices and stay rules to the channel manager again, which passes them on. A full sync sends nothing of ours: the channel manager repeats to one OTA what it already holds. So a full sync cannot repair a value our record holds wrongly; write the right value for that.
+- When an OTA shows something the channel manager does not hold: an OTA dropped an update, or a room or rate was mapped after the dates were sent. Rarely, and by a person: never on a timer and never to make sure. Make it a button a person presses on the channel's own screen.
+- An OTA takes one full sync an hour for each connection (data.scope full-sync-hour, 429 with Retry-After; data.details.retryAt says when the next one is taken). The hour is the connection's own, whoever started the last one: a full sync the hotel's owner started in ZimmerStack within the hour counts too. The client never remembers this refusal: it is one channel's own, so a call for
+  another channel is still sent. Show `retryAfterSeconds` to the person; do not retry in a loop.
+- `fullSyncAll()` does not throw for a channel that could not start: POST /full-sync answers one line for each connection: started true, or code and message (RATE_LIMITED with retryAt, CHANNEL_PAUSED, CHANNEL_NOT_FOUND, CHANNEL_MANAGER_ERROR). One connection that cannot go never stops the others. The status is 202 when at least one started and 200 when none did.
+- A paused connection is refused, 409 CHANNEL_PAUSED: nothing is sent to an OTA the hotel is not selling on. The hotel's owner starts selling on it in ZimmerStack.
+- A sandbox has no real OTA. Both requests answer 200 there and say so in notice ("Nothing was sent: a sandbox has no real OTA. On a live hotel the same request starts a full sync."); the one-connection request still wants a channelId of the sandbox's own pretend channels. Nothing is sent.
 
 ## Website bookings: apply them before you push room counts
 

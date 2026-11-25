@@ -167,6 +167,7 @@ calls ZimmerStack.
 | Create or change a room type or a rate plan | `zs.roomTypes.save(roomType)` · `zs.ratePlans.save(ratePlan)` |
 | Delete a room type or a rate plan | `zs.roomTypes.delete(idOrRef)` · `zs.ratePlans.delete(idOrRef)` |
 | Set a price modifier on one booking site | `zs.channels.setModifier(channelId, steps)` |
+| Send one OTA everything again when it shows a wrong number (a full sync) | `zs.channels.fullSync(channelId)` · `zs.channels.fullSyncAll()` |
 | Read the bookings the booking sites sent | `zs.channelBookings.list()`, or a webhook |
 | Read every booking and channel event, in order, from where I stopped | `zs.events.all({ after })` |
 | Read the bookings made on the hotel's own website | `zs.directBookings.list()` |
@@ -465,6 +466,15 @@ hotel `zs.bookings.create` also takes `nightlyRateIncludesTaxes`; `false` is ref
 `TAXES_NOT_CONFIGURED` where the hotel has confirmed no lines, and `TAXES_INSIDE_RATES` where all its
 taxes sit inside its prices.
 
+**What the OTA said about each room** (the API, 25 Nov 2026; no new package version needed). Each room
+of an OTA booking carries `mealPlanSource` (`"ota"`, `"ratePlan"` or `"default"`: who decided
+`mealPlan`), `mealPlanText` (the OTA's own meal words), `mealPrice` (a meal the guest can add, not in
+the price), `nightlyRates` (the OTA's price for each night) and `commission` (the OTA's commission on
+that room). `finance.taxIncludedInAmount` says whether the tax is inside `amounts.total`. Each is `null`
+where the OTA sent nothing, and on bookings from before that day. A booking made on MakeMyTrip now has
+`channel.otaName` `"MakeMyTrip"`, where it said `"Goibibo"` before: match the two as one OTA. How to
+save each one in a PMS: <https://docs.zimmerstack.com/guides/webhooks#pms-meal-money>
+
 Guide: <https://docs.zimmerstack.com/guides/webhooks>
 
 ## A price modifier on one booking site
@@ -497,6 +507,31 @@ One call to `zs.channels.setModifier()` moves every price on that booking site. 
 saved the setting. Never from a loop, a timer or a set-up script.
 
 Guide: <https://docs.zimmerstack.com/guides/price-per-ota>
+
+## A full sync of one OTA
+
+Sometimes one OTA shows a number that our connectivity partner does not hold: it missed an update, or a
+room was mapped after its dates were sent. A **full sync** fixes it. Our connectivity partner sends that
+OTA everything it holds for the hotel again: availability, rates and restrictions, for every date.
+
+```ts
+const { channels } = await zs.channels.list();
+const sync = await zs.channels.fullSync(channels[0]!.channelId); // needs the permission ari:write
+if (sync.started) console.log("Sent. This OTA takes the next full sync at", sync.nextAt);
+
+const all = await zs.channels.fullSyncAll(); // every OTA of the hotel, one after another
+for (const line of all.channels) if (!line.started) console.log(line.channelId, line.code, line.retryAt ?? "");
+```
+
+- Nothing new leaves ZimmerStack, and none of your numbers changes. `zs.rates.resend()` is the other
+  thing: it sends ZimmerStack's own rates again.
+- An OTA takes one full sync an hour for each connection, also counting one the hotel's owner started
+  in ZimmerStack. Inside the hour `fullSync()` throws `RATE_LIMITED` with the scope `full-sync-hour`.
+  `fullSyncAll()` never throws for one OTA: its line says why.
+- Let a person press it on the OTA's own screen. Never call it on a timer.
+- On a sandbox nothing is sent: `started` is false and `notice` says why.
+
+Page: <https://docs.zimmerstack.com/reference/send-everything-to-one-ota-again>
 
 ## Many hotels on one key
 
@@ -890,6 +925,7 @@ office address are not held to the address's limit.
 | `partner-connect-links-hour` | — | software partner | rolling hour | 120 | one-time connect links a software partner makes across all its hotels (POST /connect-links) |
 | `modifier-changes-day` | — | property | rolling 24 hours | 6 | changes to a channel's price modifier per property (PUT /channels/{channelId}/modifier); steps the channel already holds are not counted |
 | `rate-resends-day` | — | property | rolling 24 hours | 3 | times a property's prices are sent to the channels again (POST /rates/resend) |
+| `full-sync-hour` | — | OTA connection | rolling hour | 1 | full syncs of one OTA connection (POST /channels/{channelId}/full-sync, and each connection of POST /full-sync); one the hotel's owner started in ZimmerStack counts too |
 | `partner-support-tickets-day` | — | software partner | rolling 24 hours | 20 | support tickets a partner opens (POST /support-tickets), both key modes together; a replayed idempotency key is not counted |
 | `partner-support-messages-hour` | — | software partner | rolling hour | 60 | messages a partner adds to its support tickets (POST /support-tickets/{ticketId}/messages) |
 

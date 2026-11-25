@@ -2,7 +2,7 @@
 // Do not edit: change the contract, then run `pnpm --dir apps/connect-sdk run generate`.
 
 /** This package's version, sent as the user agent so ZimmerStack can tell which client a request came from. */
-export const SDK_VERSION = "1.0.0";
+export const SDK_VERSION = "1.1.0";
 /** Where the API lives. The key is sent nowhere else. */
 export const API_ORIGIN = "https://api.zimmerstack.com";
 export const API_PREFIX = "/api/v1/connect-api/v1";
@@ -104,6 +104,7 @@ export const ERROR_CODES = [
   "CHANNEL_NOT_FOUND",
   "CHANNEL_SHARED",
   "MODIFIER_OUT_OF_BAND",
+  "CHANNEL_PAUSED",
   "COMPANY_KEY_REQUIRED",
   "BILLING_SETUP_REQUIRED",
   "OWNER_HAS_ACCOUNT",
@@ -303,7 +304,7 @@ export interface Error {
   /** Human-readable, may change; branch on data.code */
   message: string;
   data: {
-    code: "API_KEY_INVALID" | "API_KEY_REVOKED" | "API_KEY_EXPIRED" | "CONNECT_API_NOT_CONFIGURED" | "IP_NOT_ALLOWED" | "SCOPE_MISSING" | "PROPERTY_UNAVAILABLE" | "CHANNEL_MANAGER_DISABLED" | "PMS_NOT_AVAILABLE" | "VALIDATION" | "RANGE_INVALID" | "HORIZON" | "TOO_MANY_UPDATES" | "TOO_MANY_CELLS" | "UNKNOWN_ROOM_TYPE" | "UNKNOWN_RATE_PLAN" | "CURRENCY_MISMATCH" | "RATE_LIMITED" | "NOTHING_ACCEPTED" | "BATCH_NOT_FOUND" | "IDEMPOTENCY_KEY_INVALID" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "STAY_INVALID" | "UNKNOWN_ROOM_TYPE_FOR_PLAN" | "OCCUPANCY_EXCEEDED" | "NO_AVAILABILITY" | "EXTERNAL_REFERENCE_REUSED" | "PAYMENT_NOT_ALLOWED" | "PAYMENT_EXCEEDS_TOTAL" | "TAXES_NOT_CONFIGURED" | "TAXES_INSIDE_RATES" | "BOOKING_NOT_FOUND" | "BOOKING_NOT_CANCELLABLE" | "MODULE_NOT_ENTITLED" | "SANDBOX_ONLY" | "ROOM_TYPE_NOT_FOUND" | "RATE_PLAN_NOT_FOUND" | "CATALOG_CONFLICT" | "CATALOG_BUSY" | "CHANNEL_MANAGER_ERROR" | "WEBHOOK_ENDPOINT_NOT_FOUND" | "WEBHOOK_DELIVERY_NOT_FOUND" | "WEBHOOK_ENDPOINT_LIMIT" | "WEBHOOK_ENDPOINT_NOT_ACTIVE" | "WEBHOOK_ENDPOINT_SUSPENDED" | "WEBHOOK_PAYLOAD_EXPIRED" | "WEBHOOK_ACCESS_ENDED" | "WEBHOOKS_UNAVAILABLE" | "PROPERTY_REQUIRED" | "PROPERTY_NOT_FOUND" | "ARI_NOT_AUTHORITATIVE" | "ROUTE_NOT_FOUND" | "PAYLOAD_TOO_LARGE" | "AUTH_BACKEND_UNAVAILABLE" | "BOOKING_NOT_MODIFIABLE" | "SANDBOX_NOT_FOUND" | "SANDBOX_INCOMPLETE" | "WRITES_FROZEN" | "WRITES_SUSPENDED" | "SHIELD_UNAVAILABLE" | "CATALOG_LIMIT_REACHED" | "TOO_MANY_NEW_ENTITIES" | "RATE_OUT_OF_BAND" | "CHANNEL_NOT_FOUND" | "CHANNEL_SHARED" | "MODIFIER_OUT_OF_BAND" | "COMPANY_KEY_REQUIRED" | "BILLING_SETUP_REQUIRED" | "OWNER_HAS_ACCOUNT" | "SANDBOX_LIMIT" | "CONFIRMATION_MISMATCH" | "PROPERTY_NOT_REMOVABLE" | "PROPERTY_NOT_CHANGEABLE" | "PROPERTY_BUSY" | "PRICE_UNAVAILABLE" | "CONNECT_LINK_NOT_FOUND" | "CONNECT_LINKS_UNAVAILABLE" | "CHANNEL_NOT_AVAILABLE" | "LIVE_KEY_REQUIRED" | "NOT_READY" | "KEY_NOT_FOUND" | "KEY_LIMIT" | "KEY_REVOKED" | "KEY_ALREADY_ROTATING" | "SCOPES_INVALID" | "ALLOWED_CIDRS_INVALID" | "REASON_REQUIRED" | "SUPPORT_TICKET_NOT_FOUND" | "SUPPORT_TICKET_CLOSED";
+    code: "API_KEY_INVALID" | "API_KEY_REVOKED" | "API_KEY_EXPIRED" | "CONNECT_API_NOT_CONFIGURED" | "IP_NOT_ALLOWED" | "SCOPE_MISSING" | "PROPERTY_UNAVAILABLE" | "CHANNEL_MANAGER_DISABLED" | "PMS_NOT_AVAILABLE" | "VALIDATION" | "RANGE_INVALID" | "HORIZON" | "TOO_MANY_UPDATES" | "TOO_MANY_CELLS" | "UNKNOWN_ROOM_TYPE" | "UNKNOWN_RATE_PLAN" | "CURRENCY_MISMATCH" | "RATE_LIMITED" | "NOTHING_ACCEPTED" | "BATCH_NOT_FOUND" | "IDEMPOTENCY_KEY_INVALID" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "STAY_INVALID" | "UNKNOWN_ROOM_TYPE_FOR_PLAN" | "OCCUPANCY_EXCEEDED" | "NO_AVAILABILITY" | "EXTERNAL_REFERENCE_REUSED" | "PAYMENT_NOT_ALLOWED" | "PAYMENT_EXCEEDS_TOTAL" | "TAXES_NOT_CONFIGURED" | "TAXES_INSIDE_RATES" | "BOOKING_NOT_FOUND" | "BOOKING_NOT_CANCELLABLE" | "MODULE_NOT_ENTITLED" | "SANDBOX_ONLY" | "ROOM_TYPE_NOT_FOUND" | "RATE_PLAN_NOT_FOUND" | "CATALOG_CONFLICT" | "CATALOG_BUSY" | "CHANNEL_MANAGER_ERROR" | "WEBHOOK_ENDPOINT_NOT_FOUND" | "WEBHOOK_DELIVERY_NOT_FOUND" | "WEBHOOK_ENDPOINT_LIMIT" | "WEBHOOK_ENDPOINT_NOT_ACTIVE" | "WEBHOOK_ENDPOINT_SUSPENDED" | "WEBHOOK_PAYLOAD_EXPIRED" | "WEBHOOK_ACCESS_ENDED" | "WEBHOOKS_UNAVAILABLE" | "PROPERTY_REQUIRED" | "PROPERTY_NOT_FOUND" | "ARI_NOT_AUTHORITATIVE" | "ROUTE_NOT_FOUND" | "PAYLOAD_TOO_LARGE" | "AUTH_BACKEND_UNAVAILABLE" | "BOOKING_NOT_MODIFIABLE" | "SANDBOX_NOT_FOUND" | "SANDBOX_INCOMPLETE" | "WRITES_FROZEN" | "WRITES_SUSPENDED" | "SHIELD_UNAVAILABLE" | "CATALOG_LIMIT_REACHED" | "TOO_MANY_NEW_ENTITIES" | "RATE_OUT_OF_BAND" | "CHANNEL_NOT_FOUND" | "CHANNEL_SHARED" | "MODIFIER_OUT_OF_BAND" | "CHANNEL_PAUSED" | "COMPANY_KEY_REQUIRED" | "BILLING_SETUP_REQUIRED" | "OWNER_HAS_ACCOUNT" | "SANDBOX_LIMIT" | "CONFIRMATION_MISMATCH" | "PROPERTY_NOT_REMOVABLE" | "PROPERTY_NOT_CHANGEABLE" | "PROPERTY_BUSY" | "PRICE_UNAVAILABLE" | "CONNECT_LINK_NOT_FOUND" | "CONNECT_LINKS_UNAVAILABLE" | "CHANNEL_NOT_AVAILABLE" | "LIVE_KEY_REQUIRED" | "NOT_READY" | "KEY_NOT_FOUND" | "KEY_LIMIT" | "KEY_REVOKED" | "KEY_ALREADY_ROTATING" | "SCOPES_INVALID" | "ALLOWED_CIDRS_INVALID" | "REASON_REQUIRED" | "SUPPORT_TICKET_NOT_FOUND" | "SUPPORT_TICKET_CLOSED";
     details?: unknown;
   };
 }
@@ -1410,6 +1411,37 @@ export interface RatesResendAccepted {
   notice: string;
 }
 
+export interface FullSyncResult {
+  /** The OTA connection, as GET /channels names it */
+  channelId: string;
+  /** true: the channel manager is sending this OTA everything it holds again. false only on a sandbox, where nothing is sent */
+  started: boolean;
+  /** When this connection takes its next full sync (ISO 8601): one hour after this one started. null on a sandbox */
+  nextAt: string | null;
+  /** Only on a sandbox: "Nothing was sent: a sandbox has no real OTA. On a live hotel the same request starts a full sync." */
+  notice?: string;
+}
+
+export interface PropertyFullSyncResult {
+  /** One line for each OTA connection of the hotel, in the order they were tried. Empty on a sandbox and on a hotel with no connection */
+  channels: Array<{
+    /** The OTA connection, as GET /channels names it */
+    channelId: string;
+    /** true: a full sync started on this connection */
+    started: boolean;
+    /** Only when started is false. RATE_LIMITED: this connection had a full sync within the last hour · CHANNEL_PAUSED: the connection is paused · CHANNEL_NOT_FOUND: the connection is no longer this hotel's · CHANNEL_MANAGER_ERROR: the channel manager did not start it */
+    code?: "RATE_LIMITED" | "CHANNEL_PAUSED" | "CHANNEL_NOT_FOUND" | "CHANNEL_MANAGER_ERROR";
+    /** The same, in a sentence; may change, branch on code */
+    message?: string;
+    /** Only with RATE_LIMITED: when this connection takes its next full sync (ISO 8601) */
+    retryAt?: string;
+  }>;
+  /** How many connections a full sync started on. The status is 202 when it is 1 or more, 200 when it is 0 */
+  started: number;
+  /** Only on a sandbox: "Nothing was sent: a sandbox has no real OTA. On a live hotel the same request starts a full sync." */
+  notice?: string;
+}
+
 export interface ChannelBookingsQuery {
   /** Changed (created, modified or cancelled) on or after this instant (ISO 8601); default: the last 7 days */
   since?: string;
@@ -1433,6 +1465,7 @@ export interface ChannelBookingsList {
     status: "CONFIRMED" | "CANCELLED";
     stayStatus: string;
     channel: {
+      /** The OTA the guest booked on: "BookingCom", "MakeMyTrip", "Goibibo", "Agoda", "Expedia", "AirBNB", "Hostelworld", "GoogleHotelARI", "OpenShopping", or "unknown". A MakeMyTrip booking says "MakeMyTrip" since 25 Nov 2026 (before: "Goibibo"). "Website" on a booking made on the hotel's own website. A sandbox booking keeps the name it was made with. Accept a name you do not know */
       otaName: string;
       otaReservationCode: string;
       source: string;
@@ -1465,6 +1498,19 @@ export interface ChannelBookingsList {
       roomTypeName: string;
       ratePlanId?: number | null;
       mealPlan: "EP" | "CP" | "MAP" | "AP";
+      /** Where mealPlan came from. "ota": the OTA said it. "ratePlan": the OTA said nothing, so it is the meal of the hotel's own rate plan. "default": nobody said, so EP. Null on bookings from before 25 Nov 2026 */
+      mealPlanSource?: "ota" | "ratePlan" | "default" | null;
+      /** The OTA's own words about the meal, as it sent them (at most 500 characters). Show them to the desk. Null when the OTA sent none */
+      mealPlanText?: string | null;
+      /** A price the OTA's words state for one meal the guest can add, for example breakfast on a room-only rate. It is not inside the room's price. Null when the words state none, or more than one */
+      mealPrice?: {
+        /** Major units of currency, with two decimals */
+        amount: number;
+        /** ISO 4217. The currency the OTA's words name; when they name none, the booking's own */
+        currency: string;
+        /** What the price counts. UNKNOWN when the OTA's words do not say */
+        basis: "PER_PERSON_PER_NIGHT" | "PER_ROOM_PER_NIGHT" | "PER_PERSON_PER_STAY" | "PER_STAY" | "UNKNOWN";
+      } | null;
       adults: number;
       children: number;
       checkIn: string;
@@ -1473,6 +1519,15 @@ export interface ChannelBookingsList {
       dayUse: boolean;
       ratePerNight: number;
       amount: number;
+      /** The OTA's price for each night of this room, in date order. A tax the OTA lists apart is not inside them. Null when the OTA sent none, and on bookings from before 25 Nov 2026 */
+      nightlyRates?: Array<{
+        /** The night, as a hotel-local date */
+        date: string;
+        /** The OTA's price for this night, in amounts.currency */
+        amount: number;
+      }> | null;
+      /** The OTA's commission on this room as the OTA sent it, in finance.currency. Null when the OTA sent none for the room */
+      commission?: number | null;
       status: string;
     }>;
     amounts: {
@@ -1498,6 +1553,8 @@ export interface ChannelBookingsList {
       paymentType?: string | null;
       /** true when the OTA pays the property with a virtual card it issues: the guest does not pay the desk for the room. true or false only; the card itself is never sent */
       virtualCard?: boolean;
+      /** true: taxAmount is inside amounts.total. false: it is on top of it. Null when the OTA does not say */
+      taxIncludedInAmount?: boolean | null;
     } | null;
     /** The hotel's own tax lines on this booking. Present only where the hotel has confirmed its taxes (outside India) and the booking has been assessed; absent on every other booking */
     taxes?: {
@@ -1559,6 +1616,19 @@ export interface ChannelBookingEvent {
       roomTypeName: string;
       ratePlanId?: number | null;
       mealPlan: "EP" | "CP" | "MAP" | "AP";
+      /** Where mealPlan came from. "ota": the OTA said it. "ratePlan": the OTA said nothing, so it is the meal of the hotel's own rate plan. "default": nobody said, so EP. Null on bookings from before 25 Nov 2026 */
+      mealPlanSource?: "ota" | "ratePlan" | "default" | null;
+      /** The OTA's own words about the meal, as it sent them (at most 500 characters). Show them to the desk. Null when the OTA sent none */
+      mealPlanText?: string | null;
+      /** A price the OTA's words state for one meal the guest can add, for example breakfast on a room-only rate. It is not inside the room's price. Null when the words state none, or more than one */
+      mealPrice?: {
+        /** Major units of currency, with two decimals */
+        amount: number;
+        /** ISO 4217. The currency the OTA's words name; when they name none, the booking's own */
+        currency: string;
+        /** What the price counts. UNKNOWN when the OTA's words do not say */
+        basis: "PER_PERSON_PER_NIGHT" | "PER_ROOM_PER_NIGHT" | "PER_PERSON_PER_STAY" | "PER_STAY" | "UNKNOWN";
+      } | null;
       adults: number;
       children: number;
       checkIn: string;
@@ -1567,6 +1637,15 @@ export interface ChannelBookingEvent {
       dayUse: boolean;
       ratePerNight: number;
       amount: number;
+      /** The OTA's price for each night of this room, in date order. A tax the OTA lists apart is not inside them. Null when the OTA sent none, and on bookings from before 25 Nov 2026 */
+      nightlyRates?: Array<{
+        /** The night, as a hotel-local date */
+        date: string;
+        /** The OTA's price for this night, in amounts.currency */
+        amount: number;
+      }> | null;
+      /** The OTA's commission on this room as the OTA sent it, in finance.currency. Null when the OTA sent none for the room */
+      commission?: number | null;
       status: string;
     }>;
     occupancy?: {
@@ -1620,6 +1699,19 @@ export interface DirectBookingEvent {
       roomTypeName: string;
       ratePlanId?: number | null;
       mealPlan: "EP" | "CP" | "MAP" | "AP";
+      /** Where mealPlan came from. "ota": the OTA said it. "ratePlan": the OTA said nothing, so it is the meal of the hotel's own rate plan. "default": nobody said, so EP. Null on bookings from before 25 Nov 2026 */
+      mealPlanSource?: "ota" | "ratePlan" | "default" | null;
+      /** The OTA's own words about the meal, as it sent them (at most 500 characters). Show them to the desk. Null when the OTA sent none */
+      mealPlanText?: string | null;
+      /** A price the OTA's words state for one meal the guest can add, for example breakfast on a room-only rate. It is not inside the room's price. Null when the words state none, or more than one */
+      mealPrice?: {
+        /** Major units of currency, with two decimals */
+        amount: number;
+        /** ISO 4217. The currency the OTA's words name; when they name none, the booking's own */
+        currency: string;
+        /** What the price counts. UNKNOWN when the OTA's words do not say */
+        basis: "PER_PERSON_PER_NIGHT" | "PER_ROOM_PER_NIGHT" | "PER_PERSON_PER_STAY" | "PER_STAY" | "UNKNOWN";
+      } | null;
       adults: number;
       children: number;
       checkIn: string;
@@ -1628,6 +1720,15 @@ export interface DirectBookingEvent {
       dayUse: boolean;
       ratePerNight: number;
       amount: number;
+      /** The OTA's price for each night of this room, in date order. A tax the OTA lists apart is not inside them. Null when the OTA sent none, and on bookings from before 25 Nov 2026 */
+      nightlyRates?: Array<{
+        /** The night, as a hotel-local date */
+        date: string;
+        /** The OTA's price for this night, in amounts.currency */
+        amount: number;
+      }> | null;
+      /** The OTA's commission on this room as the OTA sent it, in finance.currency. Null when the OTA sent none for the room */
+      commission?: number | null;
       status: string;
     }>;
     occupancy?: {
@@ -2582,6 +2683,7 @@ export interface ChannelBooking {
   status: "CONFIRMED" | "CANCELLED";
   stayStatus: string;
   channel: {
+    /** The OTA the guest booked on: "BookingCom", "MakeMyTrip", "Goibibo", "Agoda", "Expedia", "AirBNB", "Hostelworld", "GoogleHotelARI", "OpenShopping", or "unknown". A MakeMyTrip booking says "MakeMyTrip" since 25 Nov 2026 (before: "Goibibo"). "Website" on a booking made on the hotel's own website. A sandbox booking keeps the name it was made with. Accept a name you do not know */
     otaName: string;
     otaReservationCode: string;
     source: string;
@@ -2614,6 +2716,19 @@ export interface ChannelBooking {
     roomTypeName: string;
     ratePlanId?: number | null;
     mealPlan: "EP" | "CP" | "MAP" | "AP";
+    /** Where mealPlan came from. "ota": the OTA said it. "ratePlan": the OTA said nothing, so it is the meal of the hotel's own rate plan. "default": nobody said, so EP. Null on bookings from before 25 Nov 2026 */
+    mealPlanSource?: "ota" | "ratePlan" | "default" | null;
+    /** The OTA's own words about the meal, as it sent them (at most 500 characters). Show them to the desk. Null when the OTA sent none */
+    mealPlanText?: string | null;
+    /** A price the OTA's words state for one meal the guest can add, for example breakfast on a room-only rate. It is not inside the room's price. Null when the words state none, or more than one */
+    mealPrice?: {
+      /** Major units of currency, with two decimals */
+      amount: number;
+      /** ISO 4217. The currency the OTA's words name; when they name none, the booking's own */
+      currency: string;
+      /** What the price counts. UNKNOWN when the OTA's words do not say */
+      basis: "PER_PERSON_PER_NIGHT" | "PER_ROOM_PER_NIGHT" | "PER_PERSON_PER_STAY" | "PER_STAY" | "UNKNOWN";
+    } | null;
     adults: number;
     children: number;
     checkIn: string;
@@ -2622,6 +2737,15 @@ export interface ChannelBooking {
     dayUse: boolean;
     ratePerNight: number;
     amount: number;
+    /** The OTA's price for each night of this room, in date order. A tax the OTA lists apart is not inside them. Null when the OTA sent none, and on bookings from before 25 Nov 2026 */
+    nightlyRates?: Array<{
+      /** The night, as a hotel-local date */
+      date: string;
+      /** The OTA's price for this night, in amounts.currency */
+      amount: number;
+    }> | null;
+    /** The OTA's commission on this room as the OTA sent it, in finance.currency. Null when the OTA sent none for the room */
+    commission?: number | null;
     status: string;
   }>;
   amounts: {
@@ -2647,6 +2771,8 @@ export interface ChannelBooking {
     paymentType?: string | null;
     /** true when the OTA pays the property with a virtual card it issues: the guest does not pay the desk for the room. true or false only; the card itself is never sent */
     virtualCard?: boolean;
+    /** true: taxAmount is inside amounts.total. false: it is on top of it. Null when the OTA does not say */
+    taxIncludedInAmount?: boolean | null;
   } | null;
   /** The hotel's own tax lines on this booking. Present only where the hotel has confirmed its taxes (outside India) and the booking has been assessed; absent on every other booking */
   taxes?: {
@@ -2685,6 +2811,7 @@ export interface DirectBookingCancelResult {
     status: "CONFIRMED" | "CANCELLED";
     stayStatus: string;
     channel: {
+      /** The OTA the guest booked on: "BookingCom", "MakeMyTrip", "Goibibo", "Agoda", "Expedia", "AirBNB", "Hostelworld", "GoogleHotelARI", "OpenShopping", or "unknown". A MakeMyTrip booking says "MakeMyTrip" since 25 Nov 2026 (before: "Goibibo"). "Website" on a booking made on the hotel's own website. A sandbox booking keeps the name it was made with. Accept a name you do not know */
       otaName: string;
       otaReservationCode: string;
       source: string;
@@ -2717,6 +2844,19 @@ export interface DirectBookingCancelResult {
       roomTypeName: string;
       ratePlanId?: number | null;
       mealPlan: "EP" | "CP" | "MAP" | "AP";
+      /** Where mealPlan came from. "ota": the OTA said it. "ratePlan": the OTA said nothing, so it is the meal of the hotel's own rate plan. "default": nobody said, so EP. Null on bookings from before 25 Nov 2026 */
+      mealPlanSource?: "ota" | "ratePlan" | "default" | null;
+      /** The OTA's own words about the meal, as it sent them (at most 500 characters). Show them to the desk. Null when the OTA sent none */
+      mealPlanText?: string | null;
+      /** A price the OTA's words state for one meal the guest can add, for example breakfast on a room-only rate. It is not inside the room's price. Null when the words state none, or more than one */
+      mealPrice?: {
+        /** Major units of currency, with two decimals */
+        amount: number;
+        /** ISO 4217. The currency the OTA's words name; when they name none, the booking's own */
+        currency: string;
+        /** What the price counts. UNKNOWN when the OTA's words do not say */
+        basis: "PER_PERSON_PER_NIGHT" | "PER_ROOM_PER_NIGHT" | "PER_PERSON_PER_STAY" | "PER_STAY" | "UNKNOWN";
+      } | null;
       adults: number;
       children: number;
       checkIn: string;
@@ -2725,6 +2865,15 @@ export interface DirectBookingCancelResult {
       dayUse: boolean;
       ratePerNight: number;
       amount: number;
+      /** The OTA's price for each night of this room, in date order. A tax the OTA lists apart is not inside them. Null when the OTA sent none, and on bookings from before 25 Nov 2026 */
+      nightlyRates?: Array<{
+        /** The night, as a hotel-local date */
+        date: string;
+        /** The OTA's price for this night, in amounts.currency */
+        amount: number;
+      }> | null;
+      /** The OTA's commission on this room as the OTA sent it, in finance.currency. Null when the OTA sent none for the room */
+      commission?: number | null;
       status: string;
     }>;
     amounts: {
@@ -2750,6 +2899,8 @@ export interface DirectBookingCancelResult {
       paymentType?: string | null;
       /** true when the OTA pays the property with a virtual card it issues: the guest does not pay the desk for the room. true or false only; the card itself is never sent */
       virtualCard?: boolean;
+      /** true: taxAmount is inside amounts.total. false: it is on top of it. Null when the OTA does not say */
+      taxIncludedInAmount?: boolean | null;
     } | null;
     /** The hotel's own tax lines on this booking. Present only where the hotel has confirmed its taxes (outside India) and the booking has been assessed; absent on every other booking */
     taxes?: {
@@ -3790,6 +3941,10 @@ export interface Operations {
   "PUT /channels/{channelId}/modifier": { path: { channelId: string | number }; query: undefined; body: ModifierWrite; response: ModifierResult };
   /** Send the property's prices to the channels again */
   "POST /rates/resend": { path: undefined; query: undefined; body: undefined; response: RatesResendAccepted };
+  /** Full sync of one OTA connection: send that OTA everything again */
+  "POST /channels/{channelId}/full-sync": { path: { channelId: string | number }; query: undefined; body: undefined; response: FullSyncResult };
+  /** Full sync of the hotel: send every OTA everything again */
+  "POST /full-sync": { path: undefined; query: undefined; body: undefined; response: PropertyFullSyncResult };
   /** The OTA bookings the channel manager delivered, in the webhook's shape */
   "GET /channel-bookings": { path: undefined; query: { since?: string; status?: "CONFIRMED" | "CANCELLED"; limit?: number; cursor?: string }; body: undefined; response: ChannelBookingsList };
   /** One channel booking, the webhook's shape */
@@ -3917,6 +4072,8 @@ export const OPERATIONS: Record<OperationKey, { idempotent: boolean; bodyRequire
   "GET /channels": { idempotent: false, bodyRequired: false },
   "PUT /channels/{channelId}/modifier": { idempotent: true, bodyRequired: true },
   "POST /rates/resend": { idempotent: true, bodyRequired: false },
+  "POST /channels/{channelId}/full-sync": { idempotent: true, bodyRequired: false },
+  "POST /full-sync": { idempotent: true, bodyRequired: false },
   "GET /channel-bookings": { idempotent: false, bodyRequired: false },
   "GET /channel-bookings/{bookingId}": { idempotent: false, bodyRequired: false },
   "GET /webhook-endpoints": { idempotent: false, bodyRequired: false },
